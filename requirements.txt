@@ -11,3 +11,4 @@ pyshp
 openpyxl
 reportlab
 email-validator
+python-multipart
