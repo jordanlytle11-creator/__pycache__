@@ -446,7 +446,7 @@ def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: 
     return {
         'company': company,
         'contact': contact,
-        'status': 'new',
+        'status': 'No Contact',
         'township': township,
         'range': range_value,
         'section': section,
@@ -1151,7 +1151,10 @@ def export_to_sharepoint(db: Session = Depends(get_db), user: User = Depends(req
 @app.get('/manager/kpis')
 def manager_kpis(db: Session = Depends(get_db), user: User = Depends(require_manager_or_admin)):
     total = db.query(CrmRecord).count()
-    statuses = {st: db.query(CrmRecord).filter(CrmRecord.status == st).count() for st in ['new', 'in-progress', 'closed']}
+    statuses = {
+        st: db.query(CrmRecord).filter(CrmRecord.status == st).count()
+        for st in ['No Contact', 'Working', 'Signed / In Hand']
+    }
     return {'total_records': total, 'status_breakdown': statuses}
 
 
@@ -1179,7 +1182,7 @@ def import_csv(file: bytes = None, db: Session = Depends(get_db), user: User = D
         crm = CrmRecord(
             company=row.get('company', ''),
             contact=row.get('contact', ''),
-            status=row.get('status', 'new'),
+            status=row.get('status', 'No Contact'),
             township=township,
             range=rng,
             section=section,

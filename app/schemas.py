@@ -7,7 +7,7 @@ from email_validator import validate_email, EmailNotValidError
 class CrmRecordBase(BaseModel):
     company: str
     contact: str
-    status: Optional[str] = 'new'
+    status: Optional[str] = 'No Contact'
     township: int
     range: int
     section: int
@@ -31,7 +31,14 @@ class CrmRecordBase(BaseModel):
 
     @validator('status')
     def status_enum(cls, v):
-        valid = {'new', 'in-progress', 'closed'}
+        valid = {
+            'No Contact',
+            'Hard No',
+            'Working',
+            'Verbally Committed',
+            'Agreed to Terms',
+            'Signed / In Hand',
+        }
         if v not in valid:
             raise ValueError(f"status must be one of {valid}")
         return v

@@ -304,9 +304,9 @@
     <div id="page-dashboard" class="page active">
       <div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value" id="kpiTotal">—</div><div class="kpi-sub">All CRM entries</div></div>
-        <div class="kpi-card"><div class="kpi-label">New</div><div class="kpi-value" id="kpiNew" style="color:var(--accent)">—</div><div class="kpi-sub">Awaiting action</div></div>
-        <div class="kpi-card"><div class="kpi-label">In Progress</div><div class="kpi-value" id="kpiProg" style="color:var(--warn)">—</div><div class="kpi-sub">Active leads</div></div>
-        <div class="kpi-card"><div class="kpi-label">Closed</div><div class="kpi-value" id="kpiClosed" style="color:var(--success)">—</div><div class="kpi-sub">Completed</div></div>
+        <div class="kpi-card"><div class="kpi-label">No Contact</div><div class="kpi-value" id="kpiNew" style="color:var(--accent)">—</div><div class="kpi-sub">Needs outreach</div></div>
+        <div class="kpi-card"><div class="kpi-label">Working</div><div class="kpi-value" id="kpiProg" style="color:var(--warn)">—</div><div class="kpi-sub">Active negotiations</div></div>
+        <div class="kpi-card"><div class="kpi-label">Signed / In Hand</div><div class="kpi-value" id="kpiClosed" style="color:var(--success)">—</div><div class="kpi-sub">Completed deals</div></div>
       </div>
       <div class="card">
         <div class="card-header">
@@ -340,7 +340,12 @@
             <label>Status</label>
             <select id="searchStatus">
               <option value="">All statuses</option>
-              <option>new</option><option>in-progress</option><option>closed</option>
+              <option>No Contact</option>
+              <option>Hard No</option>
+              <option>Working</option>
+              <option>Verbally Committed</option>
+              <option>Agreed to Terms</option>
+              <option>Signed / In Hand</option>
             </select>
           </div>
           <button class="btn btn-primary" id="searchBtn">Search</button>
@@ -546,7 +551,14 @@
 
       <!-- Status -->
       <div class="form-group"><label>Status</label>
-        <select id="crmStatus"><option>new</option><option>in-progress</option><option>closed</option></select>
+        <select id="crmStatus">
+          <option>No Contact</option>
+          <option>Hard No</option>
+          <option>Working</option>
+          <option>Verbally Committed</option>
+          <option>Agreed to Terms</option>
+          <option>Signed / In Hand</option>
+        </select>
       </div>
     </div>
     <div class="modal-footer">

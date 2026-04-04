@@ -41,7 +41,10 @@ async function apiJSON(path, opts = {}) {
 
 // ── Badges ─────────────────────────────────────────────────────
 function statusBadge(status) {
-  const cls = status === 'new' ? 'badge-new' : status === 'in-progress' ? 'badge-progress' : 'badge-closed';
+  const cls =
+    status === 'No Contact' ? 'badge-new'
+    : ['Working', 'Verbally Committed', 'Agreed to Terms'].includes(status) ? 'badge-progress'
+    : 'badge-closed';
   return `<span class="badge ${cls}">${status}</span>`;
 }
 
@@ -202,9 +205,9 @@ async function loadDashboard() {
   try {
     const records = await apiJSON('/crm?limit=100', { headers: authHeaders() });
     const total = records.length;
-    const newCount = records.filter(r => r.status === 'new').length;
-    const progCount = records.filter(r => r.status === 'in-progress').length;
-    const closedCount = records.filter(r => r.status === 'closed').length;
+    const newCount = records.filter(r => r.status === 'No Contact').length;
+    const progCount = records.filter(r => r.status === 'Working').length;
+    const closedCount = records.filter(r => r.status === 'Signed / In Hand').length;
 
     document.getElementById('kpiTotal').textContent = total;
     document.getElementById('kpiNew').textContent = newCount;

@@ -44,7 +44,7 @@ class CrmRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     company = Column(String(255), nullable=False)
     contact = Column(String(255), nullable=False)
-    status = Column(String(50), default='new', nullable=False)
+    status = Column(String(50), default='No Contact', nullable=False)
     township = Column(Integer, nullable=False)
     range = Column(Integer, nullable=False)
     section = Column(Integer, nullable=False)
