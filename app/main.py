@@ -48,7 +48,7 @@ FORGOT_CREDENTIALS_LOG = Path(__file__).resolve().parents[1] / "forgot_credentia
 SECRET_KEY = os.getenv('LOCAL_ERP_SECRET_KEY', 'change-this-secret-in-production')
 ALGORITHM = 'HS256'
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
-pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
+pwd_context = CryptContext(schemes=['pbkdf2_sha256', 'bcrypt'], deprecated='auto')
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl='token')
 
 
