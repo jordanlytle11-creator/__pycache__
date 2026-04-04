@@ -325,8 +325,10 @@ document.getElementById('importWorkbookBtn').addEventListener('click', async () 
     const data = await res.json();
     outEl.textContent = JSON.stringify(data, null, 2);
     outEl.style.display = 'block';
-    showToast(`Imported structure for ${data.tabs_imported} tabs`, 'success');
+    showToast(`Imported ${data.crm_records_imported || 0} CRM records from ${data.tabs_imported} tabs`, 'success');
     await loadWorkbookTabs();
+    await loadDashboard();
+    await loadCRMRecords({});
   } catch (err) {
     outEl.textContent = 'Error: ' + err.message;
     outEl.style.display = 'block';

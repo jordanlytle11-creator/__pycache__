@@ -116,6 +116,7 @@ class WorkbookImportResult(BaseModel):
     workbook_name: str
     tabs_imported: int
     total_rows_imported: int
+    crm_records_imported: int
     tabs: list[WorkbookTabSummary]
 
 

@@ -189,6 +189,183 @@ def _normalize_table_name(raw_name: str, index: int) -> str:
     return f'tomahawk_{base}'
 
 
+def _stringify_cell(value) -> Optional[str]:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
+def _row_has_values(values: list[object]) -> bool:
+    return any(_stringify_cell(value) for value in values)
+
+
+def _header_score(values: list[object]) -> int:
+    normalized_values = [
+        re.sub(r'[^a-z0-9]+', '_', value.lower()).strip('_')
+        for value in (_stringify_cell(item) for item in values)
+        if value
+    ]
+    if len(normalized_values) < 4:
+        return -1
+
+    known_tokens = {
+        'ami_aoi',
+        'state_code',
+        'county_code',
+        'state',
+        'county',
+        't_r_s',
+        'town_range',
+        'township',
+        'range',
+        'section',
+        'location',
+        'location_number',
+        'well_name',
+        'dsu_name',
+        'pad_name',
+        'lease_name',
+        'lease_number',
+        'interest_type',
+        'property_id',
+        'assessor_pin',
+    }
+    score = len(normalized_values) * 2
+    for token in normalized_values:
+        if token in known_tokens:
+            score += 8
+        elif any(keyword in token for keyword in ('lease', 'owner', 'town', 'range', 'section', 'well', 'assessor', 'property')):
+            score += 3
+    return score
+
+
+def _detect_header_row(sheet) -> tuple[int, list[object]]:
+    max_scan_rows = min(sheet.max_row, 25)
+    best_score = -1
+    best_row_index = 1
+    best_values: list[object] = []
+
+    for row_index in range(1, max_scan_rows + 1):
+        values = list(next(sheet.iter_rows(min_row=row_index, max_row=row_index, values_only=True)))
+        score = _header_score(values)
+        if score < 0:
+            continue
+
+        lookahead_score = 0
+        for next_row_index in range(row_index + 1, min(sheet.max_row, row_index + 3) + 1):
+            next_values = list(next(sheet.iter_rows(min_row=next_row_index, max_row=next_row_index, values_only=True)))
+            non_empty = sum(1 for value in next_values if _stringify_cell(value))
+            lookahead_score += min(non_empty, 6)
+
+        total_score = score + lookahead_score
+        if total_score > best_score:
+            best_score = total_score
+            best_row_index = row_index
+            best_values = values
+
+    if not best_values:
+        raise HTTPException(status_code=400, detail=f'Could not detect header row in sheet: {sheet.title}')
+
+    return best_row_index, best_values
+
+
+def _first_value(row_map: dict[str, Optional[str]], aliases: list[str]) -> Optional[str]:
+    for alias in aliases:
+        value = row_map.get(alias)
+        if value:
+            return value
+    return None
+
+
+def _parse_int_token(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    match = re.search(r'(\d+)', value)
+    return int(match.group(1)) if match else None
+
+
+def _parse_trs_components(row_map: dict[str, Optional[str]]) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    section = _parse_int_token(_first_value(row_map, ['section']))
+    township = _parse_int_token(_first_value(row_map, ['township']))
+    range_value = _parse_int_token(_first_value(row_map, ['range']))
+
+    trs_text = _first_value(row_map, ['t_r_s', 'trs', 'town_range'])
+    if trs_text:
+        trs_match = re.search(r'(\d+)\s*[NSEW]?[-\s]+(\d+)\s*[NSEW]?[-\s]+(\d+)', trs_text, flags=re.IGNORECASE)
+        if trs_match:
+            township = township or int(trs_match.group(1))
+            range_value = range_value or int(trs_match.group(2))
+            section = section or int(trs_match.group(3))
+        else:
+            town_range_match = re.search(r'(\d+)\s*[NSEW]?[-\s]+(\d+)\s*[NSEW]?', trs_text, flags=re.IGNORECASE)
+            if town_range_match:
+                township = township or int(town_range_match.group(1))
+                range_value = range_value or int(town_range_match.group(2))
+
+    town_range_text = _first_value(row_map, ['town_range'])
+    if town_range_text:
+        town_range_match = re.search(r'(\d+)\s*[NSEW]?[-\s]+(\d+)\s*[NSEW]?', town_range_text, flags=re.IGNORECASE)
+        if town_range_match:
+            township = township or int(town_range_match.group(1))
+            range_value = range_value or int(town_range_match.group(2))
+
+    return township, range_value, section
+
+
+def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: int, row_map: dict[str, Optional[str]]) -> Optional[dict]:
+    township, range_value, section = _parse_trs_components(row_map)
+    if township is None or range_value is None or section is None:
+        return None
+
+    company = _first_value(row_map, [
+        'lease_name',
+        'owner_name',
+        'owner',
+        'company',
+        'well_name',
+        'dsu_name',
+        'pad_name',
+        'property_id',
+        'assessor_pin',
+        'location_number',
+    ])
+    contact = _first_value(row_map, [
+        'contact',
+        'owner_name',
+        'lease_name',
+        'owner',
+        'well_name',
+        'property_id',
+    ])
+
+    trs_text = _first_value(row_map, ['t_r_s']) or f'{township}-{range_value}-{section}'
+    fallback_label = f'{sheet_name} {trs_text}'
+    company = company or fallback_label
+    contact = contact or company
+
+    extra_data = {
+        key: value
+        for key, value in row_map.items()
+        if value and key not in {'lease_name', 'owner_name', 'owner', 'company', 'contact', 'well_name'}
+    }
+    extra_data.update({
+        'workbook_sheet': sheet_name,
+        'workbook_tab_key': tab_key,
+        'workbook_source_row': source_row_number,
+    })
+
+    return {
+        'company': company,
+        'contact': contact,
+        'status': 'new',
+        'township': township,
+        'range': range_value,
+        'section': section,
+        'extra_data': extra_data,
+    }
+
+
 @app.post('/token')
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
@@ -363,6 +540,7 @@ def import_excel_second_tab_to_db(
 def import_excel_workbook(
     file: UploadFile = File(...),
     user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db),
 ):
     try:
         from openpyxl import load_workbook
@@ -380,6 +558,7 @@ def import_excel_workbook(
 
     tabs: list[WorkbookTabSummary] = []
     total_rows = 0
+    crm_rows_to_import: list[dict] = []
 
     with engine.begin() as conn:
         conn.execute(text('''
@@ -392,15 +571,21 @@ def import_excel_workbook(
                 imported_at TEXT NOT NULL
             )
         '''))
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
+                tab_key TEXT NOT NULL,
+                source_row_number INTEGER NOT NULL,
+                crm_record_id INTEGER NOT NULL,
+                imported_at TEXT NOT NULL,
+                PRIMARY KEY (tab_key, source_row_number)
+            )
+        '''))
 
         for idx, sheet in enumerate(workbook.worksheets, start=1):
-            first_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), None)
-            if not first_row:
+            if sheet.max_row < 1:
                 continue
 
-            headers_raw = [cell for cell in first_row]
-            if not any(h is not None and str(h).strip() for h in headers_raw):
-                continue
+            header_row_number, headers_raw = _detect_header_row(sheet)
 
             normalized_names: list[str] = []
             seen_names: set[str] = set()
@@ -422,9 +607,38 @@ def import_excel_workbook(
                 if col not in existing_cols:
                     conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" TEXT'))
 
-            # Structure-only import: keep a clean table schema and do not ingest row data yet.
             conn.execute(text(f'DELETE FROM "{table_name}"'))
+            insert_cols = ', '.join(['source_row_number'] + [f'"{col}"' for col in normalized_names])
+            insert_placeholders = ', '.join([':source_row_number'] + [f':{col}' for col in normalized_names])
+            insert_sql = text(f'INSERT INTO "{table_name}" ({insert_cols}) VALUES ({insert_placeholders})')
             imported_rows = 0
+
+            for source_row_number, row in enumerate(
+                sheet.iter_rows(min_row=header_row_number + 1, values_only=True),
+                start=header_row_number + 1,
+            ):
+                row_values = list(row)
+                if not _row_has_values(row_values):
+                    continue
+
+                payload = {'source_row_number': source_row_number}
+                row_map: dict[str, Optional[str]] = {}
+                for col_index, col in enumerate(normalized_names):
+                    cell_value = row_values[col_index] if col_index < len(row_values) else None
+                    normalized_value = _stringify_cell(cell_value)
+                    payload[col] = normalized_value
+                    row_map[col] = normalized_value
+
+                conn.execute(insert_sql, payload)
+                imported_rows += 1
+
+                crm_payload = _build_crm_record_payload(sheet.title, tab_key, source_row_number, row_map)
+                if crm_payload:
+                    crm_rows_to_import.append({
+                        'tab_key': tab_key,
+                        'source_row_number': source_row_number,
+                        'record': crm_payload,
+                    })
 
             imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
             conn.execute(text('''
@@ -457,10 +671,61 @@ def import_excel_workbook(
     if not tabs:
         raise HTTPException(status_code=400, detail='No usable tabs found (missing headers)')
 
+    try:
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
+                tab_key TEXT NOT NULL,
+                source_row_number INTEGER NOT NULL,
+                crm_record_id INTEGER NOT NULL,
+                imported_at TEXT NOT NULL,
+                PRIMARY KEY (tab_key, source_row_number)
+            )
+        '''))
+        existing_ids = [row[0] for row in db.execute(text('SELECT DISTINCT crm_record_id FROM workbook_crm_import_index')).fetchall()]
+        if existing_ids:
+            placeholders = ', '.join([f':id_{index}' for index, _ in enumerate(existing_ids)])
+            db.execute(text(f'DELETE FROM crm_records WHERE id IN ({placeholders})'), {
+                f'id_{index}': crm_record_id
+                for index, crm_record_id in enumerate(existing_ids)
+            })
+        db.execute(text('DELETE FROM workbook_crm_import_index'))
+
+        imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        crm_records_imported = 0
+        for crm_row in crm_rows_to_import:
+            record_payload = crm_row['record']
+            db_record = CrmRecord(
+                company=record_payload['company'],
+                contact=record_payload['contact'],
+                status=record_payload['status'],
+                township=record_payload['township'],
+                range=record_payload['range'],
+                section=record_payload['section'],
+                trscode=f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}",
+                extra_data=record_payload['extra_data'],
+            )
+            db.add(db_record)
+            db.flush()
+            db.execute(text('''
+                INSERT INTO workbook_crm_import_index (tab_key, source_row_number, crm_record_id, imported_at)
+                VALUES (:tab_key, :source_row_number, :crm_record_id, :imported_at)
+            '''), {
+                'tab_key': crm_row['tab_key'],
+                'source_row_number': crm_row['source_row_number'],
+                'crm_record_id': db_record.id,
+                'imported_at': imported_at,
+            })
+            crm_records_imported += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     return WorkbookImportResult(
         workbook_name=file.filename or 'uploaded_workbook.xlsx',
         tabs_imported=len(tabs),
         total_rows_imported=total_rows,
+        crm_records_imported=crm_records_imported,
         tabs=tabs,
     )
 

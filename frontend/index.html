@@ -426,12 +426,12 @@
       <div class="card" style="max-width:700px;">
         <div class="card-header"><h3>Upload Excel File</h3></div>
         <div class="card-body">
-          <p class="text-muted mb-4">Upload <b>Master_TOMAHAWK_Report_20260402.xlsx</b>. Every worksheet will be ingested as its own dataset, and a left-nav button will be created for each tab.</p>
+          <p class="text-muted mb-4">Upload <b>Master_TOMAHAWK_Report_20260402.xlsx</b>. Every worksheet will be ingested as its own dataset, workbook tab rows will be preserved, and mappable rows will be loaded into CRM records.</p>
           <div class="form-group">
             <label>Workbook (.xlsx)</label>
             <input id="workbookFile" type="file" accept=".xlsx" />
           </div>
-          <button class="btn btn-primary" id="importWorkbookBtn">Import Workbook Structure</button>
+          <button class="btn btn-primary" id="importWorkbookBtn">Import Workbook Data</button>
           <div id="workbookImportOut" class="output-pre mt-4" style="display:none;"></div>
         </div>
       </div>
