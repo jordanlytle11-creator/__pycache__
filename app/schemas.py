@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, validator, EmailStr
 from typing import Optional, Dict
 import re
@@ -31,7 +32,7 @@ class CrmRecordCreate(CrmRecordBase):
 class CrmRecordRead(CrmRecordBase):
     id: int
     trscode: str
-    created_at: Optional[str]
+    created_at: Optional[datetime]
 
     class Config:
         orm_mode = True
