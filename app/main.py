@@ -295,7 +295,7 @@ def _header_score(values: list[object]) -> int:
         if value
     ]
 
-    trs_tokens = {'township', 'range', 'section', 't_r_s', 'trs', 'town_range', 'twp', 'rng', 'sec'}
+    trs_tokens = {'township', 'range', 'section', 't_r_s', 'trs', 'town_range', 'twp', 'twn', 'rng', 'sec'}
     trs_hits = sum(1 for v in normalized_values if v in trs_tokens or any(k in v for k in ('township', 'section')))
 
     # Rows with fewer than 2 non-empty cells are not headers unless they contain TRS keywords
@@ -378,6 +378,13 @@ def _first_value(row_map: dict[str, Optional[str]], aliases: list[str]) -> Optio
     return None
 
 
+def _lease_sheet_aliases(sheet_name: str, primary: list[str], fallback: list[str]) -> list[str]:
+    normalized_sheet = re.sub(r'[^a-z0-9]+', ' ', sheet_name.lower()).strip()
+    if 'lease acquisitions' in normalized_sheet or 'lacq' in normalized_sheet:
+        return primary + fallback
+    return primary
+
+
 def _parse_int_token(value: Optional[str]) -> Optional[int]:
     if not value:
         return None
@@ -410,9 +417,9 @@ def _parse_date_token(value: Optional[str]) -> Optional[date]:
 
 
 def _parse_trs_components(row_map: dict[str, Optional[str]]) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    section = _parse_int_token(_first_value(row_map, ['section', 'sec', 'sect']))
-    township = _parse_int_token(_first_value(row_map, ['township', 'twp', 'town']))
-    range_value = _parse_int_token(_first_value(row_map, ['range', 'rng', 'rge']))
+    section = _parse_int_token(_first_value(row_map, ['section', 'sec', 'sect', 'column_20']))
+    township = _parse_int_token(_first_value(row_map, ['township', 'twp', 'twn', 'town', 'column_18']))
+    range_value = _parse_int_token(_first_value(row_map, ['range', 'rng', 'rge', 'column_19']))
 
     trs_text = _first_value(row_map, ['t_r_s', 'trs', 'town_range'])
     if trs_text:
@@ -438,7 +445,7 @@ def _parse_trs_components(row_map: dict[str, Optional[str]]) -> tuple[Optional[i
 
 
 def _resolve_workbook_status(row_map: dict[str, Optional[str]]) -> Optional[str]:
-    status_value = _first_value(row_map, ['status', 'lease_status', 'crm_status', 'current_status'])
+    status_value = _first_value(row_map, ['status', 'lease_status', 'crm_status', 'current_status', 'column_22'])
     if status_value:
         return status_value
 
@@ -454,7 +461,7 @@ def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: 
     if township is None or range_value is None or section is None:
         return None
 
-    company = _first_value(row_map, [
+    company = _first_value(row_map, _lease_sheet_aliases(sheet_name, [
         'lease_name',
         'owner_name',
         'owner',
@@ -465,32 +472,32 @@ def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: 
         'property_id',
         'assessor_pin',
         'location_number',
-    ])
-    contact = _first_value(row_map, [
+    ], ['column_13', 'column_10', 'column_14']))
+    contact = _first_value(row_map, _lease_sheet_aliases(sheet_name, [
         'contact',
         'owner_name',
         'lease_name',
         'owner',
         'well_name',
         'property_id',
-    ])
+    ], ['column_13', 'column_10']))
     status_value = _resolve_workbook_status(row_map) or 'No Contact'
 
-    lease_agent = _first_value(row_map, ['lease_agent', 'landman', 'agent'])
-    lease_agent_notes = _first_value(row_map, ['lease_agent_notes', 'agent_notes', 'notes', 'remarks', 'comment'])
-    lessor_owner = _first_value(row_map, ['lessor_owner', 'owner_name', 'owner', 'lessor'])
-    lessee = _first_value(row_map, ['lessee', 'operator', 'company'])
-    lease_date = _parse_date_token(_first_value(row_map, ['lease_date', 'effective_date']))
+    lease_agent = _first_value(row_map, _lease_sheet_aliases(sheet_name, ['lease_agent', 'landman', 'agent'], ['column_29']))
+    lease_agent_notes = _first_value(row_map, _lease_sheet_aliases(sheet_name, ['lease_agent_notes', 'agent_notes', 'notes', 'remarks', 'comment'], ['column_31']))
+    lessor_owner = _first_value(row_map, _lease_sheet_aliases(sheet_name, ['lessor_owner', 'owner_name', 'owner', 'lessor'], ['column_13', 'column_10']))
+    lessee = _first_value(row_map, _lease_sheet_aliases(sheet_name, ['lessee', 'operator', 'company'], ['column_14']))
+    lease_date = _parse_date_token(_first_value(row_map, _lease_sheet_aliases(sheet_name, ['lease_date', 'effective_date'], ['column_32'])))
     vol = _first_value(row_map, ['vol', 'volume'])
     pg = _first_value(row_map, ['pg', 'page'])
-    tract_description = _first_value(row_map, ['tract_description', 'legal_description', 'description', 'tract'])
-    gross_acres = _parse_float_token(_first_value(row_map, ['gross_acres', 'gross_acreage', 'acres_gross']))
-    net_acres = _parse_float_token(_first_value(row_map, ['net_acres', 'net_acreage', 'acres_net']))
+    tract_description = _first_value(row_map, _lease_sheet_aliases(sheet_name, ['tract_description', 'legal_description', 'description', 'tract'], ['column_21']))
+    gross_acres = _parse_float_token(_first_value(row_map, _lease_sheet_aliases(sheet_name, ['gross_acres', 'gross_acreage', 'acres_gross'], ['column_23'])))
+    net_acres = _parse_float_token(_first_value(row_map, _lease_sheet_aliases(sheet_name, ['net_acres', 'net_acreage', 'acres_net'], ['column_24'])))
     royalty = _first_value(row_map, ['royalty', 'royalty_rate'])
     bonus_agreed = _first_value(row_map, ['bonus_agreed', 'bonus'])
     term_months = _parse_int_token(_first_value(row_map, ['term_month', 'term_months', 'term']))
     extension_months = _parse_int_token(_first_value(row_map, ['extension_month', 'extension_months', 'extension']))
-    mailed_date = _parse_date_token(_first_value(row_map, ['mailed_date', 'mail_date', 'date_mailed']))
+    mailed_date = _parse_date_token(_first_value(row_map, _lease_sheet_aliases(sheet_name, ['mailed_date', 'mail_date', 'date_mailed'], ['column_32'])))
 
     trs_text = _first_value(row_map, ['t_r_s']) or f'{township}-{range_value}-{section}'
     fallback_label = f'{sheet_name} {trs_text}'
