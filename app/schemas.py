@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from pydantic import BaseModel, validator, EmailStr
 from typing import Optional, Dict
 import re
@@ -12,6 +12,22 @@ class CrmRecordBase(BaseModel):
     range: int
     section: int
     extra_data: Optional[Dict] = {}
+    # Lease fields
+    lease_agent: Optional[str] = None
+    lease_agent_notes: Optional[str] = None
+    lessor_owner: Optional[str] = None
+    lessee: Optional[str] = None
+    lease_date: Optional[date] = None
+    vol: Optional[str] = None
+    pg: Optional[str] = None
+    tract_description: Optional[str] = None
+    gross_acres: Optional[float] = None
+    net_acres: Optional[float] = None
+    royalty: Optional[str] = None
+    bonus_agreed: Optional[str] = None
+    term_months: Optional[int] = None
+    extension_months: Optional[int] = None
+    mailed_date: Optional[date] = None
 
     @validator('status')
     def status_enum(cls, v):
@@ -60,6 +76,16 @@ class UserRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+class UserUpdate(BaseModel):
+    role: Optional[str] = None
+    password: Optional[str] = None
+
+    @validator('role')
+    def role_enum(cls, v):
+        if v is not None and v not in {'admin', 'manager', 'employee'}:
+            raise ValueError('role must be admin, manager, or employee')
+        return v
 
 class InviteCreate(BaseModel):
     email: EmailStr

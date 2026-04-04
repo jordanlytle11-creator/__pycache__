@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, Text, DateTime, JSON, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db import Base
@@ -51,3 +51,19 @@ class CrmRecord(Base):
     trscode = Column(String(32), nullable=False, index=True)
     extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Lease fields
+    lease_agent = Column(String(255), nullable=True)
+    lease_agent_notes = Column(Text, nullable=True)
+    lessor_owner = Column(String(255), nullable=True)
+    lessee = Column(String(255), nullable=True)
+    lease_date = Column(Date, nullable=True)
+    vol = Column(String(50), nullable=True)
+    pg = Column(String(50), nullable=True)
+    tract_description = Column(Text, nullable=True)
+    gross_acres = Column(Float, nullable=True)
+    net_acres = Column(Float, nullable=True)
+    royalty = Column(String(50), nullable=True)
+    bonus_agreed = Column(String(50), nullable=True)
+    term_months = Column(Integer, nullable=True)
+    extension_months = Column(Integer, nullable=True)
+    mailed_date = Column(Date, nullable=True)

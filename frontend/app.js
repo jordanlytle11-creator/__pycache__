@@ -384,12 +384,27 @@ document.getElementById('crmAddBtn').addEventListener('click', () => openModal('
 
 document.getElementById('createCrmBtn').addEventListener('click', async () => {
   const body = {
-    company: document.getElementById('crmCompany').value.trim(),
-    contact: document.getElementById('crmContact').value.trim(),
-    township: parseInt(document.getElementById('crmTwp').value) || null,
-    range: parseInt(document.getElementById('crmRange').value) || null,
-    section: parseInt(document.getElementById('crmSec').value) || null,
-    status: document.getElementById('crmStatus').value,
+    company:            document.getElementById('crmCompany').value.trim(),
+    contact:            document.getElementById('crmContact').value.trim(),
+    township:           parseInt(document.getElementById('crmTwp').value) || null,
+    range:              parseInt(document.getElementById('crmRange').value) || null,
+    section:            parseInt(document.getElementById('crmSec').value) || null,
+    status:             document.getElementById('crmStatus').value,
+    lease_agent:        document.getElementById('crmLeaseAgent').value.trim() || null,
+    lease_agent_notes:  document.getElementById('crmLeaseAgentNotes').value.trim() || null,
+    lessor_owner:       document.getElementById('crmLessorOwner').value.trim() || null,
+    lessee:             document.getElementById('crmLessee').value.trim() || null,
+    lease_date:         document.getElementById('crmLeaseDate').value || null,
+    vol:                document.getElementById('crmVol').value.trim() || null,
+    pg:                 document.getElementById('crmPg').value.trim() || null,
+    tract_description:  document.getElementById('crmTractDescription').value.trim() || null,
+    gross_acres:        parseFloat(document.getElementById('crmGrossAcres').value) || null,
+    net_acres:          parseFloat(document.getElementById('crmNetAcres').value) || null,
+    royalty:            document.getElementById('crmRoyalty').value.trim() || null,
+    bonus_agreed:       document.getElementById('crmBonusAgreed').value.trim() || null,
+    term_months:        parseInt(document.getElementById('crmTermMonths').value) || null,
+    extension_months:   parseInt(document.getElementById('crmExtensionMonths').value) || null,
+    mailed_date:        document.getElementById('crmMailedDate').value || null,
   };
   if (!body.company) { showToast('Company name is required', 'error'); return; }
   try {
@@ -457,15 +472,45 @@ async function loadUsers() {
     const users = await apiJSON('/admin/users', { headers: authHeaders() });
     const tbody = document.getElementById('usersTbody');
     if (!users.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="2">No users found</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="3">No users found</td></tr>';
     } else {
       tbody.innerHTML = users.map(u => `
-        <tr><td>${esc(u.email)}</td><td>${roleBadge(u.role)}</td></tr>`).join('');
+        <tr>
+          <td>${esc(u.email)}</td>
+          <td>${roleBadge(u.role)}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="openEditUser(${u.id}, '${esc(u.email)}', '${esc(u.role)}')">Edit</button>
+          </td>
+        </tr>`).join('');
     }
   } catch (err) {
     showToast('Failed to load users: ' + err.message, 'error');
   }
 }
+
+function openEditUser(id, email, role) {
+  document.getElementById('editUserId').value = id;
+  document.getElementById('editUserEmail').value = email;
+  document.getElementById('editUserRole').value = role;
+  document.getElementById('editUserPassword').value = '';
+  openModal('editUserModal');
+}
+
+document.getElementById('saveEditUserBtn').addEventListener('click', async () => {
+  const id = document.getElementById('editUserId').value;
+  const role = document.getElementById('editUserRole').value;
+  const password = document.getElementById('editUserPassword').value;
+  const body = { role };
+  if (password) body.password = password;
+  try {
+    await apiJSON(`/admin/users/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body) });
+    closeModal('editUserModal');
+    showToast('User updated', 'success');
+    loadUsers();
+  } catch (err) {
+    showToast('Failed: ' + err.message, 'error');
+  }
+});
 
 document.getElementById('openCreateUserModal').addEventListener('click', () => openModal('createUserModal'));
 

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import text, bindparam
+from sqlalchemy import text, bindparam, inspect as sa_inspect
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from uuid import uuid4
@@ -27,6 +27,7 @@ from app.schemas import (
     CrmRecordRead,
     UserCreate,
     UserRead,
+    UserUpdate,
     InviteCreate,
     InviteAccept,
     LinkControlCreate,
@@ -38,6 +39,35 @@ from app.schemas import (
 )
 
 models.Base.metadata.create_all(bind=engine)
+
+# ── Schema migration: add new lease columns to crm_records if missing ─────────
+def _migrate_crm_columns():
+    inspector = sa_inspect(engine)
+    existing_cols = {c['name'] for c in inspector.get_columns('crm_records')}
+    new_cols = [
+        ('lease_agent',       'VARCHAR(255)'),
+        ('lease_agent_notes', 'TEXT'),
+        ('lessor_owner',      'VARCHAR(255)'),
+        ('lessee',            'VARCHAR(255)'),
+        ('lease_date',        'DATE'),
+        ('vol',               'VARCHAR(50)'),
+        ('pg',                'VARCHAR(50)'),
+        ('tract_description', 'TEXT'),
+        ('gross_acres',       'FLOAT'),
+        ('net_acres',         'FLOAT'),
+        ('royalty',           'VARCHAR(50)'),
+        ('bonus_agreed',      'VARCHAR(50)'),
+        ('term_months',       'INTEGER'),
+        ('extension_months',  'INTEGER'),
+        ('mailed_date',       'DATE'),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_type in new_cols:
+            if col_name not in existing_cols:
+                conn.execute(text(f'ALTER TABLE crm_records ADD COLUMN {col_name} {col_type}'))
+        conn.commit()
+
+_migrate_crm_columns()
 
 app = FastAPI(title='Local ERP/CRM MVP')
 
@@ -481,6 +511,30 @@ def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admi
         )
         for user in users
     ]
+
+
+@app.patch('/admin/users/{user_id}', response_model=UserRead)
+def update_user(user_id: int, update: UserUpdate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail='User not found')
+    if update.role is not None:
+        user.is_admin = update.role == 'admin'
+        user.is_manager = update.role == 'manager'
+    if update.password is not None:
+        if len(update.password) < 8:
+            raise HTTPException(status_code=400, detail='Password must be at least 8 characters')
+        user.hashed_password = get_password_hash(update.password)
+    db.commit()
+    db.refresh(user)
+    return UserRead(
+        id=user.id,
+        email=user.email,
+        is_active=user.is_active,
+        is_manager=user.is_manager,
+        is_admin=user.is_admin,
+        role='admin' if user.is_admin else ('manager' if user.is_manager else 'employee'),
+    )
 
 
 @app.post('/admin/invite')
@@ -980,7 +1034,19 @@ def create_link_control(link_in: LinkControlCreate, db: Session = Depends(get_db
 @app.post('/crm', response_model=CrmRecordRead)
 def create_record(record: CrmRecordCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     trscode = f"T{record.township}R{record.range}S{record.section}"
-    db_record = CrmRecord(company=record.company, contact=record.contact, status=record.status, township=record.township, range=record.range, section=record.section, trscode=trscode, extra_data=record.extra_data)
+    db_record = CrmRecord(
+        company=record.company, contact=record.contact, status=record.status,
+        township=record.township, range=record.range, section=record.section,
+        trscode=trscode, extra_data=record.extra_data,
+        lease_agent=record.lease_agent, lease_agent_notes=record.lease_agent_notes,
+        lessor_owner=record.lessor_owner, lessee=record.lessee,
+        lease_date=record.lease_date, vol=record.vol, pg=record.pg,
+        tract_description=record.tract_description,
+        gross_acres=record.gross_acres, net_acres=record.net_acres,
+        royalty=record.royalty, bonus_agreed=record.bonus_agreed,
+        term_months=record.term_months, extension_months=record.extension_months,
+        mailed_date=record.mailed_date,
+    )
     db.add(db_record)
     db.commit()
     db.refresh(db_record)
@@ -990,7 +1056,19 @@ def create_record(record: CrmRecordCreate, db: Session = Depends(get_db), curren
 @app.post('/crm/link-create', response_model=CrmRecordRead, dependencies=[Depends(require_link_permission('create_crm'))])
 def create_record_link(record: CrmRecordCreate, db: Session = Depends(get_db)):
     trscode = f"T{record.township}R{record.range}S{record.section}"
-    db_record = CrmRecord(company=record.company, contact=record.contact, status=record.status, township=record.township, range=record.range, section=record.section, trscode=trscode, extra_data=record.extra_data)
+    db_record = CrmRecord(
+        company=record.company, contact=record.contact, status=record.status,
+        township=record.township, range=record.range, section=record.section,
+        trscode=trscode, extra_data=record.extra_data,
+        lease_agent=record.lease_agent, lease_agent_notes=record.lease_agent_notes,
+        lessor_owner=record.lessor_owner, lessee=record.lessee,
+        lease_date=record.lease_date, vol=record.vol, pg=record.pg,
+        tract_description=record.tract_description,
+        gross_acres=record.gross_acres, net_acres=record.net_acres,
+        royalty=record.royalty, bonus_agreed=record.bonus_agreed,
+        term_months=record.term_months, extension_months=record.extension_months,
+        mailed_date=record.mailed_date,
+    )
     db.add(db_record)
     db.commit()
     db.refresh(db_record)

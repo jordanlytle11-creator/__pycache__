@@ -413,8 +413,8 @@
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Email</th><th>Role</th></tr></thead>
-            <tbody id="usersTbody"><tr class="empty-row"><td colspan="2">Loading...</td></tr></tbody>
+            <thead><tr><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
+            <tbody id="usersTbody"><tr class="empty-row"><td colspan="3">Loading...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -499,21 +499,52 @@
 
 <!-- MODAL: New CRM Record -->
 <div class="modal-overlay" id="crmModal">
-  <div class="modal">
+  <div class="modal" style="width:680px;max-width:98vw;">
     <div class="modal-header">
       <h3>New CRM Record</h3>
       <button class="close-btn" data-close="crmModal">&#10005;</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="max-height:75vh;overflow-y:auto;">
+
+      <!-- Parties -->
       <div class="form-row">
+        <div class="form-group"><label>Lessor / Owner</label><input id="crmLessorOwner" placeholder="Owner name" /></div>
+        <div class="form-group"><label>Lessee</label><input id="crmLessee" placeholder="Lessee name" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Lease Agent</label><input id="crmLeaseAgent" placeholder="Agent name" /></div>
         <div class="form-group"><label>Company</label><input id="crmCompany" placeholder="Acme Oil" /></div>
-        <div class="form-group"><label>Contact</label><input id="crmContact" placeholder="Jane Doe" /></div>
       </div>
-      <div class="form-row cols3">
-        <div class="form-group"><label>Township</label><input id="crmTwp" type="number" value="25" /></div>
-        <div class="form-group"><label>Range</label><input id="crmRange" type="number" value="9" /></div>
-        <div class="form-group"><label>Section</label><input id="crmSec" type="number" value="14" /></div>
+      <div class="form-group"><label>Lease Agent Notes</label><textarea id="crmLeaseAgentNotes" rows="2" placeholder="Notes about the lease agent"></textarea></div>
+      <div class="form-group"><label>Contact</label><input id="crmContact" placeholder="Jane Doe" /></div>
+
+      <!-- Location -->
+      <div class="form-row cols3" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr;">
+        <div class="form-group"><label>TWN</label><input id="crmTwp" type="number" value="25" /></div>
+        <div class="form-group"><label>RNG</label><input id="crmRange" type="number" value="9" /></div>
+        <div class="form-group"><label>SEC</label><input id="crmSec" type="number" value="14" /></div>
+        <div class="form-group"><label>VOL</label><input id="crmVol" placeholder="Vol" /></div>
+        <div class="form-group"><label>PG</label><input id="crmPg" placeholder="Pg" /></div>
       </div>
+      <div class="form-group"><label>Tract Description</label><textarea id="crmTractDescription" rows="2" placeholder="Legal description of the tract"></textarea></div>
+
+      <!-- Lease Details -->
+      <div class="form-row">
+        <div class="form-group"><label>Lease Date</label><input id="crmLeaseDate" type="date" /></div>
+        <div class="form-group"><label>Mailed Date</label><input id="crmMailedDate" type="date" /></div>
+      </div>
+      <div class="form-row cols3" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+        <div class="form-group"><label>Gross Acres</label><input id="crmGrossAcres" type="number" step="0.0001" placeholder="0.0000" /></div>
+        <div class="form-group"><label>Net Acres</label><input id="crmNetAcres" type="number" step="0.0001" placeholder="0.0000" /></div>
+        <div class="form-group"><label>Term (Month)</label><input id="crmTermMonths" type="number" placeholder="Months" /></div>
+        <div class="form-group"><label>Extension (Month)</label><input id="crmExtensionMonths" type="number" placeholder="Months" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Royalty</label><input id="crmRoyalty" placeholder="e.g. 3/16" /></div>
+        <div class="form-group"><label>Bonus Agreed</label><input id="crmBonusAgreed" placeholder="e.g. $500/acre" /></div>
+      </div>
+
+      <!-- Status -->
       <div class="form-group"><label>Status</label>
         <select id="crmStatus"><option>new</option><option>in-progress</option><option>closed</option></select>
       </div>
@@ -521,6 +552,35 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close="crmModal">Cancel</button>
       <button class="btn btn-primary" id="createCrmBtn">Save Record</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Edit User -->
+<div class="modal-overlay" id="editUserModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Edit User</h3>
+      <button class="close-btn" data-close="editUserModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editUserId" />
+      <div class="form-group"><label>Email</label><input id="editUserEmail" type="email" disabled style="opacity:.6;cursor:not-allowed;" /></div>
+      <div class="form-group"><label>Role</label>
+        <select id="editUserRole">
+          <option value="employee">Employee</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>New Password <span class="text-muted">(leave blank to keep current)</span></label>
+        <input id="editUserPassword" type="password" placeholder="Min 8 characters" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="editUserModal">Cancel</button>
+      <button class="btn btn-primary" id="saveEditUserBtn">Save Changes</button>
     </div>
   </div>
 </div>
