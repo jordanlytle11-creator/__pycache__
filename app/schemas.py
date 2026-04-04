@@ -31,17 +31,12 @@ class CrmRecordBase(BaseModel):
 
     @validator('status')
     def status_enum(cls, v):
-        valid = {
-            'No Contact',
-            'Hard No',
-            'Working',
-            'Verbally Committed',
-            'Agreed to Terms',
-            'Signed / In Hand',
-        }
-        if v not in valid:
-            raise ValueError(f"status must be one of {valid}")
-        return v
+        if v is None:
+            return 'No Contact'
+        value = v.strip()
+        if not value:
+            return 'No Contact'
+        return value
 
     @validator('township', 'range', 'section')
     def non_negative(cls, v):
