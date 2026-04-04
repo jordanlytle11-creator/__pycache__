@@ -294,7 +294,12 @@ def _header_score(values: list[object]) -> int:
         for value in (_stringify_cell(item) for item in values)
         if value
     ]
-    if len(normalized_values) < 4:
+
+    trs_tokens = {'township', 'range', 'section', 't_r_s', 'trs', 'town_range', 'twp', 'rng', 'sec'}
+    trs_hits = sum(1 for v in normalized_values if v in trs_tokens or any(k in v for k in ('township', 'section')))
+
+    # Rows with fewer than 2 non-empty cells are not headers unless they contain TRS keywords
+    if len(normalized_values) < 2 and trs_hits == 0:
         return -1
 
     known_tokens = {
@@ -325,6 +330,13 @@ def _header_score(values: list[object]) -> int:
             score += 8
         elif any(keyword in token for keyword in ('lease', 'owner', 'town', 'range', 'section', 'well', 'assessor', 'property')):
             score += 3
+
+    # Strong bonus for rows that contain TRS field names — these are almost always real header rows
+    if trs_hits >= 2:
+        score += 100
+    elif trs_hits == 1:
+        score += 30
+
     return score
 
 
@@ -398,9 +410,9 @@ def _parse_date_token(value: Optional[str]) -> Optional[date]:
 
 
 def _parse_trs_components(row_map: dict[str, Optional[str]]) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    section = _parse_int_token(_first_value(row_map, ['section']))
-    township = _parse_int_token(_first_value(row_map, ['township']))
-    range_value = _parse_int_token(_first_value(row_map, ['range']))
+    section = _parse_int_token(_first_value(row_map, ['section', 'sec', 'sect']))
+    township = _parse_int_token(_first_value(row_map, ['township', 'twp', 'town']))
+    range_value = _parse_int_token(_first_value(row_map, ['range', 'rng', 'rge']))
 
     trs_text = _first_value(row_map, ['t_r_s', 'trs', 'town_range'])
     if trs_text:
