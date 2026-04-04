@@ -362,7 +362,7 @@ def import_excel_second_tab_to_db(
 @app.post('/admin/import-excel-workbook', response_model=WorkbookImportResult)
 def import_excel_workbook(
     file: UploadFile = File(...),
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_manager_or_admin),
 ):
     try:
         from openpyxl import load_workbook
@@ -422,23 +422,9 @@ def import_excel_workbook(
                 if col not in existing_cols:
                     conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" TEXT'))
 
+            # Structure-only import: keep a clean table schema and do not ingest row data yet.
             conn.execute(text(f'DELETE FROM "{table_name}"'))
-
-            insert_cols = ['source_row_number'] + normalized_names
-            insert_cols_sql = ', '.join([f'"{col}"' for col in insert_cols])
-            insert_placeholders = ', '.join([f':{col}' for col in insert_cols])
-            insert_sql = text(f'INSERT INTO "{table_name}" ({insert_cols_sql}) VALUES ({insert_placeholders})')
-
             imported_rows = 0
-            for excel_row_num, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-                if not row or not any(cell is not None and str(cell).strip() for cell in row):
-                    continue
-                payload = {'source_row_number': excel_row_num}
-                for i, col in enumerate(normalized_names):
-                    val = row[i] if i < len(row) else None
-                    payload[col] = None if val is None else str(val)
-                conn.execute(insert_sql, payload)
-                imported_rows += 1
 
             imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
             conn.execute(text('''

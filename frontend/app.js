@@ -325,7 +325,7 @@ document.getElementById('importWorkbookBtn').addEventListener('click', async () 
     const data = await res.json();
     outEl.textContent = JSON.stringify(data, null, 2);
     outEl.style.display = 'block';
-    showToast(`Imported ${data.tabs_imported} tabs`, 'success');
+    showToast(`Imported structure for ${data.tabs_imported} tabs`, 'success');
     await loadWorkbookTabs();
   } catch (err) {
     outEl.textContent = 'Error: ' + err.message;
