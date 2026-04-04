@@ -76,6 +76,7 @@ async function doLogin() {
     form.append('password', pass);
     const data = await apiJSON('/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
     token = data.access_token;
+    localStorage.setItem('erp_token', token);
 
     // Decode role from JWT payload (base64 middle segment)
     const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -91,6 +92,7 @@ async function doLogin() {
 document.getElementById('logoutBtn').addEventListener('click', () => {
   token = null;
   currentUser = null;
+  localStorage.removeItem('erp_token');
   document.getElementById('sidebar').style.display = 'none';
   document.getElementById('main').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
@@ -587,6 +589,25 @@ function prefillInviteTokenFromUrl() {
 }
 
 prefillInviteTokenFromUrl();
+
+// ── Auto-restore session on page load ─────────────────────────
+(function restoreSession() {
+  const saved = localStorage.getItem('erp_token');
+  if (!saved) return;
+  try {
+    const payload = JSON.parse(atob(saved.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    // Check token expiry (exp is Unix seconds)
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      localStorage.removeItem('erp_token');
+      return;
+    }
+    token = saved;
+    currentUser = { email: payload.sub, role: payload.role || 'employee' };
+    showApp();
+  } catch {
+    localStorage.removeItem('erp_token');
+  }
+})();
 
 // ── Link Tokens ────────────────────────────────────────────────
 document.getElementById('linkBtn').addEventListener('click', async () => {
