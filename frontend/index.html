@@ -88,6 +88,9 @@
     .kpi-card .kpi-label { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 6px; }
     .kpi-card .kpi-value { font-size: 28px; font-weight: 700; }
     .kpi-card .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .status-breakdown { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+    .status-pill { display: inline-flex; align-items: center; gap: 7px; background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px; }
+    .status-count { font-size: 12px; font-weight: 700; color: var(--muted); }
 
     /* CARD */
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
@@ -304,10 +307,11 @@
     <div id="page-dashboard" class="page active">
       <div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value" id="kpiTotal">—</div><div class="kpi-sub">All CRM entries</div></div>
-        <div class="kpi-card"><div class="kpi-label">No Contact</div><div class="kpi-value" id="kpiNew" style="color:var(--accent)">—</div><div class="kpi-sub">Needs outreach</div></div>
-        <div class="kpi-card"><div class="kpi-label">Working</div><div class="kpi-value" id="kpiProg" style="color:var(--warn)">—</div><div class="kpi-sub">Active negotiations</div></div>
-        <div class="kpi-card"><div class="kpi-label">Signed / In Hand</div><div class="kpi-value" id="kpiClosed" style="color:var(--success)">—</div><div class="kpi-sub">Completed deals</div></div>
+        <div class="kpi-card"><div class="kpi-label">No Contact</div><div class="kpi-value" id="kpiNew" style="color:var(--accent)">—</div><div class="kpi-sub">Includes Unlocatable</div></div>
+        <div class="kpi-card"><div class="kpi-label">In Progress</div><div class="kpi-value" id="kpiProg" style="color:var(--warn)">—</div><div class="kpi-sub">Working and active statuses</div></div>
+        <div class="kpi-card"><div class="kpi-label">Closed</div><div class="kpi-value" id="kpiClosed" style="color:var(--success)">—</div><div class="kpi-sub">Signed or Hard No</div></div>
       </div>
+      <div id="dashStatusBreakdown" class="status-breakdown"></div>
       <div class="card">
         <div class="card-header">
           <h3>Recent CRM Records</h3>
@@ -341,6 +345,10 @@
             <select id="searchStatus">
               <option value="">All statuses</option>
               <option>No Contact</option>
+              <option>No Contact / Unlocatable</option>
+              <option>Outreach Pending</option>
+              <option>Non-priority</option>
+              <option>Surface Only</option>
               <option>Hard No</option>
               <option>Working</option>
               <option>Verbally Committed</option>
@@ -553,6 +561,10 @@
       <div class="form-group"><label>Status</label>
         <select id="crmStatus">
           <option>No Contact</option>
+          <option>No Contact / Unlocatable</option>
+          <option>Outreach Pending</option>
+          <option>Non-priority</option>
+          <option>Surface Only</option>
           <option>Hard No</option>
           <option>Working</option>
           <option>Verbally Committed</option>

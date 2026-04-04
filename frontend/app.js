@@ -41,9 +41,11 @@ async function apiJSON(path, opts = {}) {
 
 // ── Badges ─────────────────────────────────────────────────────
 function statusBadge(status) {
+  const newStatuses = ['No Contact', 'No Contact / Unlocatable', 'Non-priority'];
+  const progressStatuses = ['Working', 'Verbally Committed', 'Agreed to Terms', 'Surface Only', 'Outreach Pending'];
   const cls =
-    status === 'No Contact' ? 'badge-new'
-    : ['Working', 'Verbally Committed', 'Agreed to Terms'].includes(status) ? 'badge-progress'
+    newStatuses.includes(status) ? 'badge-new'
+    : progressStatuses.includes(status) ? 'badge-progress'
     : 'badge-closed';
   return `<span class="badge ${cls}">${status}</span>`;
 }
@@ -206,15 +208,20 @@ document.getElementById('submitForgotCredsBtn').addEventListener('click', async 
 async function loadDashboard() {
   try {
     const records = await apiJSON('/crm?limit=100', { headers: authHeaders() });
+    const newStatuses = new Set(['No Contact', 'No Contact / Unlocatable']);
+    const progressStatuses = new Set(['Working', 'Verbally Committed', 'Agreed to Terms', 'Surface Only', 'Outreach Pending']);
+    const closedStatuses = new Set(['Signed / In Hand', 'Hard No']);
+
     const total = records.length;
-    const newCount = records.filter(r => r.status === 'No Contact').length;
-    const progCount = records.filter(r => r.status === 'Working').length;
-    const closedCount = records.filter(r => r.status === 'Signed / In Hand').length;
+    const newCount = records.filter(r => newStatuses.has(r.status)).length;
+    const progCount = records.filter(r => progressStatuses.has(r.status)).length;
+    const closedCount = records.filter(r => closedStatuses.has(r.status)).length;
 
     document.getElementById('kpiTotal').textContent = total;
     document.getElementById('kpiNew').textContent = newCount;
     document.getElementById('kpiProg').textContent = progCount;
     document.getElementById('kpiClosed').textContent = closedCount;
+    renderDashboardStatusBreakdown(records);
 
     const tbody = document.getElementById('dashTbody');
     const recent = records.slice(-10).reverse();
@@ -234,6 +241,27 @@ async function loadDashboard() {
   } catch (err) {
     showToast('Failed to load dashboard: ' + err.message, 'error');
   }
+}
+
+function renderDashboardStatusBreakdown(records) {
+  const container = document.getElementById('dashStatusBreakdown');
+  if (!container) return;
+
+  if (!records.length) {
+    container.innerHTML = '<span class="text-muted">No status data yet</span>';
+    return;
+  }
+
+  const counts = new Map();
+  records.forEach((r) => {
+    const key = (r.status || 'No Contact').trim() || 'No Contact';
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  container.innerHTML = sorted
+    .map(([status, count]) => `<span class="status-pill">${statusBadge(status)}<span class="status-count">${count}</span></span>`)
+    .join('');
 }
 
 function trsCode(r) {
