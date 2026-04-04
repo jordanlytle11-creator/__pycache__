@@ -107,6 +107,7 @@ class ExcelSecondTabImportResult(BaseModel):
 
 class WorkbookTabSummary(BaseModel):
     tab_key: str
+    workbook_name: str
     sheet_name: str
     table_name: str
     row_count: int

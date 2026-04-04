@@ -261,7 +261,7 @@ function renderWorkbookNav(tabs) {
   container.innerHTML = tabs.map(t => `
     <div class="nav-item nav-workbook-tab" data-page="workbook-tab" data-tab-key="${esc(t.tab_key)}" data-tab-name="${esc(t.sheet_name)}">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h8m-8 4h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
-      ${esc(t.sheet_name)}
+      ${esc(t.workbook_name || t.sheet_name)}
     </div>
   `).join('');
 
@@ -285,7 +285,7 @@ async function loadWorkbookTabRows(tabKey, tabName) {
   cardsEl.innerHTML = '';
 
   try {
-    const data = await apiJSON(`/crm/workbook-tabs/${encodeURIComponent(tabKey)}/rows?limit=500`, { headers: authHeaders() });
+    const data = await apiJSON(`/crm/workbook-tabs/${encodeURIComponent(tabKey)}/rows?limit=300000`, { headers: authHeaders() });
     metaEl.textContent = `Rows: ${data.rows.length}`;
 
     if (!data.rows.length) {
@@ -354,7 +354,7 @@ document.getElementById('searchBtn').addEventListener('click', () => {
 async function loadCRMRecords(params) {
   const qs = new URLSearchParams(params).toString();
   try {
-    const path = qs ? `/crm/search?${qs}&limit=50000` : '/crm?limit=50000';
+    const path = qs ? `/crm/search?${qs}&limit=300000` : '/crm?limit=300000';
     const records = await apiJSON(path, { headers: authHeaders() });
     const tbody = document.getElementById('crmTbody');
     if (records.length === 0) {
@@ -498,7 +498,11 @@ document.getElementById('inviteBtn').addEventListener('click', async () => {
     const data = await apiJSON('/admin/invite', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
     outEl.textContent = JSON.stringify(data, null, 2);
     outEl.style.display = 'block';
-    showToast('Invite token generated', 'success');
+    if (data.delivery === 'email') {
+      showToast('Invite email sent', 'success');
+    } else {
+      showToast('SMTP not configured; invite saved with link/token output', 'info');
+    }
   } catch (err) {
     outEl.textContent = 'Error: ' + err.message;
     outEl.style.display = 'block';
@@ -524,6 +528,17 @@ document.getElementById('acceptBtn').addEventListener('click', async () => {
     showToast('Failed: ' + err.message, 'error');
   }
 });
+
+function prefillInviteTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const token = (params.get('invite_token') || '').trim();
+  if (!token) return;
+
+  const tokenInput = document.getElementById('acceptToken');
+  if (tokenInput) tokenInput.value = token;
+}
+
+prefillInviteTokenFromUrl();
 
 // ── Link Tokens ────────────────────────────────────────────────
 document.getElementById('linkBtn').addEventListener('click', async () => {

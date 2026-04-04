@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from uuid import uuid4
@@ -43,6 +43,7 @@ app = FastAPI(title='Local ERP/CRM MVP')
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 FORGOT_CREDENTIALS_LOG = Path(__file__).resolve().parents[1] / "forgot_credentials_requests.log"
+INVITE_REQUESTS_LOG = Path(__file__).resolve().parents[1] / "invite_requests.log"
 
 # security utils
 SECRET_KEY = os.getenv('LOCAL_ERP_SECRET_KEY', 'change-this-secret-in-production')
@@ -155,6 +156,63 @@ def send_forgot_credentials_email_to_admin(subject: str, body: str) -> bool:
     msg['From'] = smtp_from
     msg['To'] = admin_email
     msg.set_content(body)
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+        server.starttls()
+        if smtp_user and smtp_password:
+            server.login(smtp_user, smtp_password)
+        server.send_message(msg)
+
+    return True
+
+
+def send_invite_email_to_user(recipient_email: str, role: str, token: str, expires_at: datetime) -> bool:
+    smtp_host = os.getenv('LOCAL_ERP_SMTP_HOST')
+    smtp_port = int(os.getenv('LOCAL_ERP_SMTP_PORT', '587'))
+    smtp_user = os.getenv('LOCAL_ERP_SMTP_USER')
+    smtp_password = os.getenv('LOCAL_ERP_SMTP_PASSWORD')
+    smtp_from = os.getenv('LOCAL_ERP_SMTP_FROM') or smtp_user
+    app_url = os.getenv('LOCAL_ERP_APP_URL', 'https://local-erp.onrender.com').rstrip('/')
+
+    if not smtp_host or not smtp_from:
+        return False
+
+    invite_link = f"{app_url}/?invite_token={token}"
+    login_link = app_url
+    expires_text = expires_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+    body = '\n'.join([
+        'You were invited to Local ERP/CRM.',
+        '',
+        f'Role: {role}',
+        f'Login: {login_link}',
+        f'Invite link: {invite_link}',
+        f'Invite token: {token}',
+        f'Expires at: {expires_text}',
+        '',
+        'If the link does not auto-fill the token, open the app and paste the token in Accept Invite.',
+    ])
+
+    msg = EmailMessage()
+    msg['Subject'] = 'You are invited to Local ERP/CRM'
+    msg['From'] = smtp_from
+    msg['To'] = recipient_email
+    msg.set_content(body)
+    msg.add_alternative(
+        f"""
+<html>
+  <body>
+    <p>You were invited to <b>Local ERP/CRM</b>.</p>
+    <p><b>Role:</b> {role}</p>
+    <p><a href=\"{login_link}\">Open Login</a></p>
+    <p><a href=\"{invite_link}\">Accept Invite</a></p>
+    <p><b>Invite token:</b> {token}</p>
+    <p><b>Expires at:</b> {expires_text}</p>
+    <p>If the invite link does not auto-fill the token, copy/paste the token in the Accept Invite section.</p>
+  </body>
+</html>
+""",
+        subtype='html',
+    )
 
     with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
         server.starttls()
@@ -366,6 +424,27 @@ def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: 
     }
 
 
+def _normalize_company_key(company: Optional[str]) -> str:
+    if not company:
+        return ''
+    return re.sub(r'\s+', ' ', company).strip().lower()
+
+
+def _merge_crm_payload(current: dict, incoming: dict) -> dict:
+    merged = current.copy()
+
+    for field in ('company', 'contact', 'status', 'township', 'range', 'section'):
+        value = incoming.get(field)
+        if value is not None and value != '':
+            merged[field] = value
+
+    current_extra = merged.get('extra_data') or {}
+    incoming_extra = incoming.get('extra_data') or {}
+    merged['extra_data'] = {**current_extra, **incoming_extra}
+
+    return merged
+
+
 @app.post('/token')
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
@@ -391,9 +470,17 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db), admin: User 
 @app.get('/admin/users', response_model=List[UserRead])
 def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     users = db.query(User).all()
-    for user in users:
-        user.role = 'admin' if user.is_admin else ('manager' if user.is_manager else 'employee')
-    return users
+    return [
+        UserRead(
+            id=user.id,
+            email=user.email,
+            is_active=user.is_active,
+            is_manager=user.is_manager,
+            is_admin=user.is_admin,
+            role='admin' if user.is_admin else ('manager' if user.is_manager else 'employee'),
+        )
+        for user in users
+    ]
 
 
 @app.post('/admin/invite')
@@ -403,7 +490,36 @@ def create_invite(invite: InviteCreate, db: Session = Depends(get_db), admin: Us
     invite_obj = InviteToken(token=token, email=invite.email, role=invite.role, expires_at=expiry)
     db.add(invite_obj)
     db.commit()
-    return {'invite_token': token, 'expires_at': expiry.isoformat(), 'role': invite.role}
+
+    try:
+        sent = send_invite_email_to_user(invite.email, invite.role, token, expiry)
+    except Exception:
+        sent = False
+
+    app_url = os.getenv('LOCAL_ERP_APP_URL', 'https://local-erp.onrender.com').rstrip('/')
+    invite_link = f"{app_url}/?invite_token={token}"
+
+    if not sent:
+        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        with open(INVITE_REQUESTS_LOG, 'a', encoding='utf-8') as f:
+            f.write('\n'.join([
+                'Invite email delivery fallback (not sent via SMTP).',
+                f'Timestamp: {now}',
+                f'Recipient: {invite.email}',
+                f'Role: {invite.role}',
+                f'Invite link: {invite_link}',
+                f'Invite token: {token}',
+                f'Expires at: {expiry.isoformat()}',
+                '-' * 72,
+            ]) + '\n')
+
+    return {
+        'invite_token': token,
+        'invite_link': invite_link,
+        'expires_at': expiry.isoformat(),
+        'role': invite.role,
+        'delivery': 'email' if sent else 'logged',
+    }
 
 
 @app.post('/admin/accept-invite')
@@ -556,14 +672,17 @@ def import_excel_workbook(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Invalid Excel file: {exc}')
 
+    workbook_name = file.filename or 'uploaded_workbook.xlsx'
+
     tabs: list[WorkbookTabSummary] = []
     total_rows = 0
-    crm_rows_to_import: list[dict] = []
+    crm_rows_by_name: dict[str, dict] = {}
 
     with engine.begin() as conn:
         conn.execute(text('''
             CREATE TABLE IF NOT EXISTS workbook_tabs_index (
                 tab_key TEXT PRIMARY KEY,
+                workbook_name TEXT NOT NULL DEFAULT '',
                 sheet_name TEXT NOT NULL,
                 table_name TEXT NOT NULL,
                 headers_json TEXT NOT NULL,
@@ -571,6 +690,12 @@ def import_excel_workbook(
                 imported_at TEXT NOT NULL
             )
         '''))
+        idx_columns = {
+            row[1]
+            for row in conn.execute(text('PRAGMA table_info(workbook_tabs_index)')).fetchall()
+        }
+        if 'workbook_name' not in idx_columns:
+            conn.execute(text("ALTER TABLE workbook_tabs_index ADD COLUMN workbook_name TEXT NOT NULL DEFAULT ''"))
         conn.execute(text('''
             CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
                 tab_key TEXT NOT NULL,
@@ -634,17 +759,26 @@ def import_excel_workbook(
 
                 crm_payload = _build_crm_record_payload(sheet.title, tab_key, source_row_number, row_map)
                 if crm_payload:
-                    crm_rows_to_import.append({
-                        'tab_key': tab_key,
-                        'source_row_number': source_row_number,
-                        'record': crm_payload,
-                    })
+                    crm_key = _normalize_company_key(crm_payload.get('company'))
+                    if crm_key:
+                        if crm_key not in crm_rows_by_name:
+                            crm_rows_by_name[crm_key] = {
+                                'record': crm_payload,
+                                'sources': [(tab_key, source_row_number)],
+                            }
+                        else:
+                            crm_rows_by_name[crm_key]['record'] = _merge_crm_payload(
+                                crm_rows_by_name[crm_key]['record'],
+                                crm_payload,
+                            )
+                            crm_rows_by_name[crm_key]['sources'].append((tab_key, source_row_number))
 
             imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
             conn.execute(text('''
-                INSERT INTO workbook_tabs_index (tab_key, sheet_name, table_name, headers_json, row_count, imported_at)
-                VALUES (:tab_key, :sheet_name, :table_name, :headers_json, :row_count, :imported_at)
+                INSERT INTO workbook_tabs_index (tab_key, workbook_name, sheet_name, table_name, headers_json, row_count, imported_at)
+                VALUES (:tab_key, :workbook_name, :sheet_name, :table_name, :headers_json, :row_count, :imported_at)
                 ON CONFLICT(tab_key) DO UPDATE SET
+                    workbook_name=excluded.workbook_name,
                     sheet_name=excluded.sheet_name,
                     table_name=excluded.table_name,
                     headers_json=excluded.headers_json,
@@ -652,6 +786,7 @@ def import_excel_workbook(
                     imported_at=excluded.imported_at
             '''), {
                 'tab_key': tab_key,
+                'workbook_name': workbook_name,
                 'sheet_name': sheet.title,
                 'table_name': table_name,
                 'headers_json': json.dumps(normalized_names),
@@ -662,6 +797,7 @@ def import_excel_workbook(
             total_rows += imported_rows
             tabs.append(WorkbookTabSummary(
                 tab_key=tab_key,
+                workbook_name=workbook_name,
                 sheet_name=sheet.title,
                 table_name=table_name,
                 row_count=imported_rows,
@@ -681,40 +817,73 @@ def import_excel_workbook(
                 PRIMARY KEY (tab_key, source_row_number)
             )
         '''))
-        existing_ids = [row[0] for row in db.execute(text('SELECT DISTINCT crm_record_id FROM workbook_crm_import_index')).fetchall()]
-        if existing_ids:
-            placeholders = ', '.join([f':id_{index}' for index, _ in enumerate(existing_ids)])
-            db.execute(text(f'DELETE FROM crm_records WHERE id IN ({placeholders})'), {
-                f'id_{index}': crm_record_id
-                for index, crm_record_id in enumerate(existing_ids)
-            })
         db.execute(text('DELETE FROM workbook_crm_import_index'))
 
         imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-        crm_records_imported = 0
-        for crm_row in crm_rows_to_import:
-            record_payload = crm_row['record']
-            db_record = CrmRecord(
-                company=record_payload['company'],
-                contact=record_payload['contact'],
-                status=record_payload['status'],
-                township=record_payload['township'],
-                range=record_payload['range'],
-                section=record_payload['section'],
-                trscode=f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}",
-                extra_data=record_payload['extra_data'],
+        existing_records = db.query(CrmRecord).all()
+        existing_by_name: dict[str, CrmRecord] = {}
+        duplicate_ids_to_delete: list[int] = []
+        for existing in existing_records:
+            key = _normalize_company_key(existing.company)
+            if not key:
+                continue
+            current = existing_by_name.get(key)
+            if current is None:
+                existing_by_name[key] = existing
+            elif existing.id > current.id:
+                duplicate_ids_to_delete.append(current.id)
+                existing_by_name[key] = existing
+            else:
+                duplicate_ids_to_delete.append(existing.id)
+
+        if duplicate_ids_to_delete:
+            db.execute(
+                text('DELETE FROM crm_records WHERE id IN :ids').bindparams(bindparam('ids', expanding=True)),
+                {'ids': duplicate_ids_to_delete},
             )
-            db.add(db_record)
-            db.flush()
-            db.execute(text('''
-                INSERT INTO workbook_crm_import_index (tab_key, source_row_number, crm_record_id, imported_at)
-                VALUES (:tab_key, :source_row_number, :crm_record_id, :imported_at)
-            '''), {
-                'tab_key': crm_row['tab_key'],
-                'source_row_number': crm_row['source_row_number'],
-                'crm_record_id': db_record.id,
-                'imported_at': imported_at,
-            })
+
+        crm_records_imported = 0
+        for crm_key, crm_row in crm_rows_by_name.items():
+            record_payload = crm_row['record']
+            existing = existing_by_name.get(crm_key)
+
+            if existing:
+                merged_extra = {**(existing.extra_data or {}), **(record_payload['extra_data'] or {})}
+                existing.company = record_payload['company']
+                existing.contact = record_payload['contact']
+                existing.status = record_payload['status']
+                existing.township = record_payload['township']
+                existing.range = record_payload['range']
+                existing.section = record_payload['section']
+                existing.trscode = f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}"
+                existing.extra_data = merged_extra
+                db_record = existing
+            else:
+                db_record = CrmRecord(
+                    company=record_payload['company'],
+                    contact=record_payload['contact'],
+                    status=record_payload['status'],
+                    township=record_payload['township'],
+                    range=record_payload['range'],
+                    section=record_payload['section'],
+                    trscode=f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}",
+                    extra_data=record_payload['extra_data'],
+                )
+                db.add(db_record)
+                db.flush()
+                existing_by_name[crm_key] = db_record
+
+            for tab_key, source_row_number in crm_row['sources']:
+                db.execute(text('''
+                    INSERT INTO workbook_crm_import_index (tab_key, source_row_number, crm_record_id, imported_at)
+                    VALUES (:tab_key, :source_row_number, :crm_record_id, :imported_at)
+                '''), {
+                    'tab_key': tab_key,
+                    'source_row_number': source_row_number,
+                    'crm_record_id': db_record.id,
+                    'imported_at': imported_at,
+                })
+
             crm_records_imported += 1
         db.commit()
     except Exception:
@@ -722,7 +891,7 @@ def import_excel_workbook(
         raise
 
     return WorkbookImportResult(
-        workbook_name=file.filename or 'uploaded_workbook.xlsx',
+        workbook_name=workbook_name,
         tabs_imported=len(tabs),
         total_rows_imported=total_rows,
         crm_records_imported=crm_records_imported,
@@ -737,6 +906,7 @@ def list_workbook_tabs(user: User = Depends(require_manager_or_admin)):
         conn.execute(text('''
             CREATE TABLE IF NOT EXISTS workbook_tabs_index (
                 tab_key TEXT PRIMARY KEY,
+                workbook_name TEXT NOT NULL DEFAULT '',
                 sheet_name TEXT NOT NULL,
                 table_name TEXT NOT NULL,
                 headers_json TEXT NOT NULL,
@@ -744,21 +914,29 @@ def list_workbook_tabs(user: User = Depends(require_manager_or_admin)):
                 imported_at TEXT NOT NULL
             )
         '''))
-        result = conn.execute(text('SELECT tab_key, sheet_name, table_name, headers_json, row_count FROM workbook_tabs_index ORDER BY tab_key')).fetchall()
+        idx_columns = {
+            row[1]
+            for row in conn.execute(text('PRAGMA table_info(workbook_tabs_index)')).fetchall()
+        }
+        if 'workbook_name' not in idx_columns:
+            conn.execute(text("ALTER TABLE workbook_tabs_index ADD COLUMN workbook_name TEXT NOT NULL DEFAULT ''"))
+
+        result = conn.execute(text('SELECT tab_key, workbook_name, sheet_name, table_name, headers_json, row_count FROM workbook_tabs_index ORDER BY tab_key')).fetchall()
         for row in result:
             rows.append(WorkbookTabSummary(
                 tab_key=row[0],
-                sheet_name=row[1],
-                table_name=row[2],
-                row_count=row[4],
-                headers=json.loads(row[3]),
+                workbook_name=row[1] or row[2],
+                sheet_name=row[2],
+                table_name=row[3],
+                row_count=row[5],
+                headers=json.loads(row[4]),
             ))
     return rows
 
 
 @app.get('/crm/workbook-tabs/{tab_key}/rows', response_model=WorkbookTabRowsResult)
 def get_workbook_tab_rows(tab_key: str, limit: int = 200, user: User = Depends(require_manager_or_admin)):
-    safe_limit = max(1, min(limit, 5000))
+    safe_limit = max(1, min(limit, 300000))
 
     with engine.begin() as conn:
         idx = conn.execute(text('SELECT sheet_name, table_name, headers_json FROM workbook_tabs_index WHERE tab_key = :tab_key'), {'tab_key': tab_key}).fetchone()
@@ -821,7 +999,7 @@ def create_record_link(record: CrmRecordCreate, db: Session = Depends(get_db)):
 
 @app.get('/crm', response_model=List[CrmRecordRead])
 def list_records(skip: int = 0, limit: int = 5000, db: Session = Depends(get_db), user: User = Depends(require_manager_or_admin)):
-    safe_limit = max(1, min(limit, 50000))
+    safe_limit = max(1, min(limit, 300000))
     return db.query(CrmRecord).offset(skip).limit(safe_limit).all()
 
 
@@ -858,7 +1036,7 @@ def search_records(
         q = q.filter(CrmRecord.section == section)
     if status is not None:
         q = q.filter(CrmRecord.status == status)
-    safe_limit = max(1, min(limit, 50000))
+    safe_limit = max(1, min(limit, 300000))
     return q.limit(safe_limit).all()
 
 
