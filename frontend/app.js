@@ -151,6 +151,7 @@ function navigateTo(page) {
   document.getElementById('pageTitle').textContent = pageTitles[page] || page;
 
   if (page === 'dashboard') loadDashboard();
+  if (page === 'crm') loadCRMRecords({});
   if (page === 'users') loadUsers();
 }
 
@@ -207,7 +208,7 @@ document.getElementById('submitForgotCredsBtn').addEventListener('click', async 
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
   try {
-    const records = await apiJSON('/crm?limit=100', { headers: authHeaders() });
+    const records = await apiJSON('/crm?limit=300000', { headers: authHeaders() });
     const newStatuses = new Set(['No Contact', 'No Contact / Unlocatable']);
     const progressStatuses = new Set(['Working', 'Verbally Committed', 'Agreed to Terms', 'Surface Only', 'Outreach Pending']);
     const closedStatuses = new Set(['Signed / In Hand', 'Hard No']);
