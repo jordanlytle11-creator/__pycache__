@@ -1,8 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import text, bindparam, inspect as sa_inspect
+from sqlalchemy import text, inspect as sa_inspect
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from uuid import uuid4
@@ -373,6 +373,30 @@ def _parse_int_token(value: Optional[str]) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def _parse_float_token(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    cleaned = re.sub(r'[^0-9.\-]+', '', value)
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _parse_date_token(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    text_value = value.strip()
+    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'):
+        try:
+            return datetime.strptime(text_value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _parse_trs_components(row_map: dict[str, Optional[str]]) -> tuple[Optional[int], Optional[int], Optional[int]]:
     section = _parse_int_token(_first_value(row_map, ['section']))
     township = _parse_int_token(_first_value(row_map, ['township']))
@@ -401,6 +425,18 @@ def _parse_trs_components(row_map: dict[str, Optional[str]]) -> tuple[Optional[i
     return township, range_value, section
 
 
+def _resolve_workbook_status(row_map: dict[str, Optional[str]]) -> Optional[str]:
+    status_value = _first_value(row_map, ['status', 'lease_status', 'crm_status', 'current_status'])
+    if status_value:
+        return status_value
+
+    for key, value in row_map.items():
+        if value and 'status' in key:
+            return value
+
+    return None
+
+
 def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: int, row_map: dict[str, Optional[str]]) -> Optional[dict]:
     township, range_value, section = _parse_trs_components(row_map)
     if township is None or range_value is None or section is None:
@@ -426,6 +462,23 @@ def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: 
         'well_name',
         'property_id',
     ])
+    status_value = _resolve_workbook_status(row_map) or 'No Contact'
+
+    lease_agent = _first_value(row_map, ['lease_agent', 'landman', 'agent'])
+    lease_agent_notes = _first_value(row_map, ['lease_agent_notes', 'agent_notes', 'notes', 'remarks', 'comment'])
+    lessor_owner = _first_value(row_map, ['lessor_owner', 'owner_name', 'owner', 'lessor'])
+    lessee = _first_value(row_map, ['lessee', 'operator', 'company'])
+    lease_date = _parse_date_token(_first_value(row_map, ['lease_date', 'effective_date']))
+    vol = _first_value(row_map, ['vol', 'volume'])
+    pg = _first_value(row_map, ['pg', 'page'])
+    tract_description = _first_value(row_map, ['tract_description', 'legal_description', 'description', 'tract'])
+    gross_acres = _parse_float_token(_first_value(row_map, ['gross_acres', 'gross_acreage', 'acres_gross']))
+    net_acres = _parse_float_token(_first_value(row_map, ['net_acres', 'net_acreage', 'acres_net']))
+    royalty = _first_value(row_map, ['royalty', 'royalty_rate'])
+    bonus_agreed = _first_value(row_map, ['bonus_agreed', 'bonus'])
+    term_months = _parse_int_token(_first_value(row_map, ['term_month', 'term_months', 'term']))
+    extension_months = _parse_int_token(_first_value(row_map, ['extension_month', 'extension_months', 'extension']))
+    mailed_date = _parse_date_token(_first_value(row_map, ['mailed_date', 'mail_date', 'date_mailed']))
 
     trs_text = _first_value(row_map, ['t_r_s']) or f'{township}-{range_value}-{section}'
     fallback_label = f'{sheet_name} {trs_text}'
@@ -446,10 +499,25 @@ def _build_crm_record_payload(sheet_name: str, tab_key: str, source_row_number: 
     return {
         'company': company,
         'contact': contact,
-        'status': 'No Contact',
+        'status': status_value,
         'township': township,
         'range': range_value,
         'section': section,
+        'lease_agent': lease_agent,
+        'lease_agent_notes': lease_agent_notes,
+        'lessor_owner': lessor_owner,
+        'lessee': lessee,
+        'lease_date': lease_date,
+        'vol': vol,
+        'pg': pg,
+        'tract_description': tract_description,
+        'gross_acres': gross_acres,
+        'net_acres': net_acres,
+        'royalty': royalty,
+        'bonus_agreed': bonus_agreed,
+        'term_months': term_months,
+        'extension_months': extension_months,
+        'mailed_date': mailed_date,
         'extra_data': extra_data,
     }
 
@@ -460,10 +528,23 @@ def _normalize_company_key(company: Optional[str]) -> str:
     return re.sub(r'\s+', ' ', company).strip().lower()
 
 
+def _crm_record_key(payload: dict) -> str:
+    company_key = _normalize_company_key(payload.get('company'))
+    township = payload.get('township')
+    range_value = payload.get('range')
+    section = payload.get('section')
+    return f'{company_key}|{township}|{range_value}|{section}'
+
+
 def _merge_crm_payload(current: dict, incoming: dict) -> dict:
     merged = current.copy()
 
-    for field in ('company', 'contact', 'status', 'township', 'range', 'section'):
+    for field in (
+        'company', 'contact', 'status', 'township', 'range', 'section',
+        'lease_agent', 'lease_agent_notes', 'lessor_owner', 'lessee', 'lease_date',
+        'vol', 'pg', 'tract_description', 'gross_acres', 'net_acres', 'royalty',
+        'bonus_agreed', 'term_months', 'extension_months', 'mailed_date',
+    ):
         value = incoming.get(field)
         if value is not None and value != '':
             merged[field] = value
@@ -730,7 +811,7 @@ def import_excel_workbook(
 
     tabs: list[WorkbookTabSummary] = []
     total_rows = 0
-    crm_rows_by_name: dict[str, dict] = {}
+    crm_rows_by_key: dict[str, dict] = {}
 
     with engine.begin() as conn:
         conn.execute(text('''
@@ -813,19 +894,19 @@ def import_excel_workbook(
 
                 crm_payload = _build_crm_record_payload(sheet.title, tab_key, source_row_number, row_map)
                 if crm_payload:
-                    crm_key = _normalize_company_key(crm_payload.get('company'))
+                    crm_key = _crm_record_key(crm_payload)
                     if crm_key:
-                        if crm_key not in crm_rows_by_name:
-                            crm_rows_by_name[crm_key] = {
+                        if crm_key not in crm_rows_by_key:
+                            crm_rows_by_key[crm_key] = {
                                 'record': crm_payload,
                                 'sources': [(tab_key, source_row_number)],
                             }
                         else:
-                            crm_rows_by_name[crm_key]['record'] = _merge_crm_payload(
-                                crm_rows_by_name[crm_key]['record'],
+                            crm_rows_by_key[crm_key]['record'] = _merge_crm_payload(
+                                crm_rows_by_key[crm_key]['record'],
                                 crm_payload,
                             )
-                            crm_rows_by_name[crm_key]['sources'].append((tab_key, source_row_number))
+                            crm_rows_by_key[crm_key]['sources'].append((tab_key, source_row_number))
 
             imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
             conn.execute(text('''
@@ -875,31 +956,22 @@ def import_excel_workbook(
 
         imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
         existing_records = db.query(CrmRecord).all()
-        existing_by_name: dict[str, CrmRecord] = {}
-        duplicate_ids_to_delete: list[int] = []
+        existing_by_key: dict[str, CrmRecord] = {}
         for existing in existing_records:
-            key = _normalize_company_key(existing.company)
+            key = _crm_record_key({
+                'company': existing.company,
+                'township': existing.township,
+                'range': existing.range,
+                'section': existing.section,
+            })
             if not key:
                 continue
-            current = existing_by_name.get(key)
-            if current is None:
-                existing_by_name[key] = existing
-            elif existing.id > current.id:
-                duplicate_ids_to_delete.append(current.id)
-                existing_by_name[key] = existing
-            else:
-                duplicate_ids_to_delete.append(existing.id)
-
-        if duplicate_ids_to_delete:
-            db.execute(
-                text('DELETE FROM crm_records WHERE id IN :ids').bindparams(bindparam('ids', expanding=True)),
-                {'ids': duplicate_ids_to_delete},
-            )
+            existing_by_key[key] = existing
 
         crm_records_imported = 0
-        for crm_key, crm_row in crm_rows_by_name.items():
+        for crm_key, crm_row in crm_rows_by_key.items():
             record_payload = crm_row['record']
-            existing = existing_by_name.get(crm_key)
+            existing = existing_by_key.get(crm_key)
 
             if existing:
                 merged_extra = {**(existing.extra_data or {}), **(record_payload['extra_data'] or {})}
@@ -910,6 +982,21 @@ def import_excel_workbook(
                 existing.range = record_payload['range']
                 existing.section = record_payload['section']
                 existing.trscode = f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}"
+                existing.lease_agent = record_payload.get('lease_agent')
+                existing.lease_agent_notes = record_payload.get('lease_agent_notes')
+                existing.lessor_owner = record_payload.get('lessor_owner')
+                existing.lessee = record_payload.get('lessee')
+                existing.lease_date = record_payload.get('lease_date')
+                existing.vol = record_payload.get('vol')
+                existing.pg = record_payload.get('pg')
+                existing.tract_description = record_payload.get('tract_description')
+                existing.gross_acres = record_payload.get('gross_acres')
+                existing.net_acres = record_payload.get('net_acres')
+                existing.royalty = record_payload.get('royalty')
+                existing.bonus_agreed = record_payload.get('bonus_agreed')
+                existing.term_months = record_payload.get('term_months')
+                existing.extension_months = record_payload.get('extension_months')
+                existing.mailed_date = record_payload.get('mailed_date')
                 existing.extra_data = merged_extra
                 db_record = existing
             else:
@@ -921,11 +1008,26 @@ def import_excel_workbook(
                     range=record_payload['range'],
                     section=record_payload['section'],
                     trscode=f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}",
+                    lease_agent=record_payload.get('lease_agent'),
+                    lease_agent_notes=record_payload.get('lease_agent_notes'),
+                    lessor_owner=record_payload.get('lessor_owner'),
+                    lessee=record_payload.get('lessee'),
+                    lease_date=record_payload.get('lease_date'),
+                    vol=record_payload.get('vol'),
+                    pg=record_payload.get('pg'),
+                    tract_description=record_payload.get('tract_description'),
+                    gross_acres=record_payload.get('gross_acres'),
+                    net_acres=record_payload.get('net_acres'),
+                    royalty=record_payload.get('royalty'),
+                    bonus_agreed=record_payload.get('bonus_agreed'),
+                    term_months=record_payload.get('term_months'),
+                    extension_months=record_payload.get('extension_months'),
+                    mailed_date=record_payload.get('mailed_date'),
                     extra_data=record_payload['extra_data'],
                 )
                 db.add(db_record)
                 db.flush()
-                existing_by_name[crm_key] = db_record
+                existing_by_key[crm_key] = db_record
 
             for tab_key, source_row_number in crm_row['sources']:
                 db.execute(text('''
