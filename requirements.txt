@@ -9,3 +9,5 @@ geopandas
 fiona
 pyshp
 openpyxl
+reportlab
+email-validator
