@@ -1,3 +1,8 @@
+databases:
+  - name: local-erp-db
+    databaseName: local_erp
+    user: local_erp_user
+
 services:
   - type: web
     name: local-erp
@@ -9,7 +14,9 @@ services:
     envVars:
       - key: LOCAL_ERP_SECRET_KEY
         generateValue: true
-      - key: LOCAL_ERP_DB_PATH
-        value: /opt/render/project/src/local_erp.db
+      - key: DATABASE_URL
+        fromDatabase:
+          name: local-erp-db
+          property: connectionString
       - key: LOCAL_ERP_ADMIN_EMAIL
         value: admin@localerp.com

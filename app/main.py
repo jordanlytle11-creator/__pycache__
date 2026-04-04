@@ -820,8 +820,9 @@ def create_record_link(record: CrmRecordCreate, db: Session = Depends(get_db)):
 
 
 @app.get('/crm', response_model=List[CrmRecordRead])
-def list_records(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user: User = Depends(require_manager_or_admin)):
-    return db.query(CrmRecord).offset(skip).limit(limit).all()
+def list_records(skip: int = 0, limit: int = 5000, db: Session = Depends(get_db), user: User = Depends(require_manager_or_admin)):
+    safe_limit = max(1, min(limit, 50000))
+    return db.query(CrmRecord).offset(skip).limit(safe_limit).all()
 
 
 @app.get('/crm/link-search', response_model=List[CrmRecordRead], dependencies=[Depends(require_link_permission('read_crm'))])
@@ -839,7 +840,15 @@ def search_records_link(township: int = None, range: int = None, section: int = 
 
 
 @app.get('/crm/search', response_model=List[CrmRecordRead])
-def search_records(township: int = None, range: int = None, section: int = None, status: str = None, db: Session = Depends(get_db), user: User = Depends(require_manager_or_admin)):
+def search_records(
+    township: int = None,
+    range: int = None,
+    section: int = None,
+    status: str = None,
+    limit: int = 5000,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_manager_or_admin),
+):
     q = db.query(CrmRecord)
     if township is not None:
         q = q.filter(CrmRecord.township == township)
@@ -849,7 +858,8 @@ def search_records(township: int = None, range: int = None, section: int = None,
         q = q.filter(CrmRecord.section == section)
     if status is not None:
         q = q.filter(CrmRecord.status == status)
-    return q.limit(200).all()
+    safe_limit = max(1, min(limit, 50000))
+    return q.limit(safe_limit).all()
 
 
 @app.post('/crm/shapefile')

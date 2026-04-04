@@ -354,7 +354,7 @@ document.getElementById('searchBtn').addEventListener('click', () => {
 async function loadCRMRecords(params) {
   const qs = new URLSearchParams(params).toString();
   try {
-    const path = qs ? `/crm/search?${qs}` : '/crm';
+    const path = qs ? `/crm/search?${qs}&limit=50000` : '/crm?limit=50000';
     const records = await apiJSON(path, { headers: authHeaders() });
     const tbody = document.getElementById('crmTbody');
     if (records.length === 0) {
