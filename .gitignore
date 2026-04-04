@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment files
+.env
+.env.*
+
+# Local databases and generated data
+*.db
+*.sqlite
+*.sqlite3
+forgot_credentials_requests.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/*.code-workspace
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# GIS and export artifacts
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.zip
+
+# Temporary scripts
+_import_workbook_all_tabs.py

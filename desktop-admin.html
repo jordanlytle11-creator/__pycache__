@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Local ERP Admin Dashboard</title>
+  <style>body{font-family:Arial;} .card{padding:12px;border:1px solid #ccc;margin:10px;}</style>
+</head>
+<body>
+  <h1>Local ERP/CRM Admin Console</h1>
+  <p>Use this page to launch the API and run admin tasks.</p>
+  <div class="card"><a href="http://127.0.0.1:8000/docs" target="_blank">Open API Swagger docs</a></div>
+  <div class="card">Create user: POST <code>/admin/users</code> (requires admin token)</div>
+  <div class="card">Invite: POST <code>/admin/invite</code></div>
+  <div class="card">Generate shapefile: POST <code>/crm/shapefile</code></div>
+  <div class="card">SharePoint export: POST <code>/sharepoint/export</code></div>
+</body>
+</html>

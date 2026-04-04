@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: local-erp
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: LOCAL_ERP_SECRET_KEY
+        generateValue: true
+      - key: LOCAL_ERP_DB_PATH
+        value: /var/data/local_erp.db
+      - key: LOCAL_ERP_ADMIN_EMAIL
+        value: admin@localerp.com
+    disk:
+      name: local-erp-data
+      mountPath: /var/data
+      sizeGB: 1

@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local ERP/CRM</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sidebar-w: 220px;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --danger: #dc2626;
+      --success: #16a34a;
+      --warn: #d97706;
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --muted: #64748b;
+      --sidebar-bg: #1e293b;
+      --sidebar-text: #94a3b8;
+      --sidebar-active: #2563eb;
+    }
+
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+    /* LOGIN */
+    #loginScreen {
+      position: fixed; inset: 0; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .login-card {
+      background: var(--card); border-radius: 12px; padding: 40px 36px; width: 380px;
+      box-shadow: 0 25px 50px rgba(0,0,0,.4);
+    }
+    .login-card .logo { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+    .login-card .tagline { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+    .login-card .err { background: #fef2f2; border: 1px solid #fca5a5; color: var(--danger); border-radius: 6px; padding: 9px 12px; font-size: 13px; margin-bottom: 14px; display: none; }
+
+    /* SIDEBAR */
+    #sidebar {
+      width: var(--sidebar-w); background: var(--sidebar-bg); flex-shrink: 0;
+      display: flex; flex-direction: column; overflow-y: auto;
+    }
+    .sidebar-header { padding: 20px 18px 8px; }
+    .sidebar-header .brand { font-size: 16px; font-weight: 700; color: #f1f5f9; letter-spacing: .3px; }
+    .sidebar-header .user-pill {
+      margin-top: 12px; background: rgba(255,255,255,.07); border-radius: 8px;
+      padding: 8px 10px; display: flex; align-items: center; gap: 9px;
+    }
+    .user-pill .avatar {
+      width: 30px; height: 30px; border-radius: 50%; background: var(--accent);
+      display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0;
+    }
+    .user-pill .info .name { font-size: 12px; font-weight: 600; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+    .user-pill .info .role { font-size: 11px; color: var(--sidebar-text); }
+    .nav-section { padding: 14px 10px 4px; }
+    .nav-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #475569; padding: 0 8px 6px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+      border-radius: 7px; cursor: pointer; color: var(--sidebar-text); font-size: 13px;
+      font-weight: 500; transition: background .15s, color .15s; user-select: none;
+    }
+    .nav-item:hover { background: rgba(255,255,255,.07); color: #e2e8f0; }
+    .nav-item.active { background: var(--sidebar-active); color: #fff; }
+    .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .sidebar-footer { margin-top: auto; padding: 14px 10px; }
+
+    /* MAIN */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .topbar {
+      background: var(--card); border-bottom: 1px solid var(--border);
+      padding: 0 24px; height: 54px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    }
+    .topbar .page-title { font-size: 16px; font-weight: 600; }
+    .topbar .actions { display: flex; gap: 10px; align-items: center; }
+    .content { flex: 1; overflow-y: auto; padding: 24px; }
+
+    /* PAGES */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* KPI */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+    .kpi-card .kpi-label { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 6px; }
+    .kpi-card .kpi-value { font-size: 28px; font-weight: 700; }
+    .kpi-card .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* CARD */
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .card-header h3 { font-size: 14px; font-weight: 600; }
+    .card-body { padding: 20px; }
+
+    /* FORMS */
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-row.cols3 { grid-template-columns: 1fr 1fr 1fr; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+    .form-group input, .form-group select, .form-group textarea {
+      padding: 9px 12px; border: 1px solid var(--border); border-radius: 7px;
+      font-size: 13px; background: var(--card); color: var(--text); transition: border-color .15s; width: 100%;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    }
+
+    /* BUTTONS */
+    .btn {
+      display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px;
+      border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer;
+      border: none; transition: background .15s, opacity .15s; text-decoration: none; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-outline { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    .btn-outline:hover { background: rgba(37,99,235,.06); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--bg); color: var(--text); }
+    .btn-sm { padding: 6px 11px; font-size: 12px; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* TABLE */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { text-align: left; padding: 10px 14px; background: #f8fafc; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody td { padding: 11px 14px; vertical-align: middle; }
+    .empty-row td { text-align: center; padding: 32px; color: var(--muted); font-style: italic; }
+
+    /* BADGES */
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .badge-new { background: #dbeafe; color: #1d4ed8; }
+    .badge-progress { background: #fef3c7; color: #92400e; }
+    .badge-closed { background: #dcfce7; color: #166534; }
+    .badge-admin { background: #ede9fe; color: #6d28d9; }
+    .badge-manager { background: #dbeafe; color: #1d4ed8; }
+    .badge-employee { background: #f1f5f9; color: #475569; }
+
+    /* TOAST */
+    #toastContainer { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 9999; }
+    .toast {
+      background: #1e293b; color: #f1f5f9; padding: 12px 18px; border-radius: 9px;
+      font-size: 13px; font-weight: 500; box-shadow: 0 8px 24px rgba(0,0,0,.25);
+      display: flex; align-items: center; gap: 10px; min-width: 240px; max-width: 340px;
+      animation: slideIn .25s ease;
+    }
+    .toast.success { border-left: 4px solid #22c55e; }
+    .toast.error { border-left: 4px solid #ef4444; }
+    .toast.info { border-left: 4px solid #3b82f6; }
+    @keyframes slideIn { from { transform: translateX(30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* MODAL */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      align-items: center; justify-content: center; z-index: 500; display: none;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--card); border-radius: 12px; width: 480px; max-width: 95vw;
+      box-shadow: 0 25px 50px rgba(0,0,0,.3); overflow: hidden;
+    }
+    .modal-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .modal-header h3 { font-size: 15px; font-weight: 600; }
+    .modal-body { padding: 22px; }
+    .modal-footer { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+    .close-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
+    .close-btn:hover { background: var(--bg); }
+
+    /* UTILS */
+    .section-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+    .output-pre { background: #f8fafc; border: 1px solid var(--border); border-radius: 7px; padding: 12px; font-size: 12px; font-family: 'Consolas', monospace; white-space: pre-wrap; max-height: 180px; overflow: auto; color: var(--text); }
+    .text-muted { color: var(--muted); font-size: 12px; }
+    .mt-4 { margin-top: 16px; }
+    .mb-4 { margin-bottom: 16px; }
+    .flex { display: flex; }
+    .gap-2 { gap: 8px; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    .data-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .data-card h4 { font-size: 13px; margin-bottom: 10px; color: var(--accent); }
+    .kv { display: grid; grid-template-columns: 1fr; gap: 6px; }
+    .kv-row { font-size: 12px; color: var(--text); border-top: 1px dashed var(--border); padding-top: 6px; }
+    .kv-row b { color: var(--muted); display: inline-block; min-width: 110px; }
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="logo">&#9889; Local ERP/CRM</div>
+    <div class="tagline">Vaquero Resources Management System</div>
+    <div id="loginErr" class="err"></div>
+    <div class="form-group">
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="admin@localerp.com" autocomplete="username" />
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password" />
+    </div>
+    <button class="btn btn-primary" id="loginBtn" style="width:100%;justify-content:center;padding:11px;">Sign In</button>
+    <button class="btn btn-ghost mt-4" id="forgotCredsBtn" style="width:100%;justify-content:center;">Forgot username or password?</button>
+    <div class="text-muted mt-4" style="text-align:center;">
+      <a href="http://127.0.0.1:8000/docs" target="_blank" style="color:var(--accent);">Open API Docs &#8599;</a>
+    </div>
+  </div>
+</div>
+
+<!-- SIDEBAR -->
+<nav id="sidebar" style="display:none;">
+  <div class="sidebar-header">
+    <div class="brand">&#9889; Local ERP</div>
+    <div class="user-pill">
+      <div class="avatar" id="userAvatar">?</div>
+      <div class="info">
+        <div class="name" id="userEmailDisplay">—</div>
+        <div class="role" id="userRoleDisplay">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">Overview</div>
+    <div class="nav-item active" data-page="dashboard">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      Dashboard
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">CRM</div>
+    <div class="nav-item" data-page="crm">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      Records
+    </div>
+    <div class="nav-item" data-page="import">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
+      Import CSV
+    </div>
+  </div>
+
+  <div class="nav-section" id="navExports">
+    <div class="nav-label">Exports</div>
+    <div class="nav-item" data-page="exports">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      Export Tools
+    </div>
+  </div>
+
+  <div class="nav-section" id="navAdmin">
+    <div class="nav-label">Administration</div>
+    <div class="nav-item" data-page="workbook-import">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0 0l-4-4m4 4l4-4"/></svg>
+      Import Workbook
+    </div>
+    <div class="nav-item" data-page="users">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+      Users
+    </div>
+    <div class="nav-item" data-page="invites">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+      Invites
+    </div>
+    <div class="nav-item" data-page="links">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+      Link Tokens
+    </div>
+  </div>
+
+  <div class="nav-section" id="navWorkbook">
+    <div class="nav-label">Workbook Tabs</div>
+    <div id="workbookTabsNav"></div>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="nav-item" id="logoutBtn">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+      Sign Out
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<div id="main" style="display:none;">
+  <div class="topbar">
+    <div class="page-title" id="pageTitle">Dashboard</div>
+    <div class="actions">
+      <a href="http://127.0.0.1:8000/docs" target="_blank" class="btn btn-ghost btn-sm">API Docs &#8599;</a>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- Dashboard -->
+    <div id="page-dashboard" class="page active">
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value" id="kpiTotal">—</div><div class="kpi-sub">All CRM entries</div></div>
+        <div class="kpi-card"><div class="kpi-label">New</div><div class="kpi-value" id="kpiNew" style="color:var(--accent)">—</div><div class="kpi-sub">Awaiting action</div></div>
+        <div class="kpi-card"><div class="kpi-label">In Progress</div><div class="kpi-value" id="kpiProg" style="color:var(--warn)">—</div><div class="kpi-sub">Active leads</div></div>
+        <div class="kpi-card"><div class="kpi-label">Closed</div><div class="kpi-value" id="kpiClosed" style="color:var(--success)">—</div><div class="kpi-sub">Completed</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3>Recent CRM Records</h3>
+          <button class="btn btn-primary btn-sm" id="dashAddBtn">+ Add Record</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Company</th><th>Contact</th><th>TRS Code</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody id="dashTbody"><tr class="empty-row"><td colspan="6">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CRM Records -->
+    <div id="page-crm" class="page">
+      <div class="flex justify-between items-center mb-4">
+        <div class="section-title" style="margin:0">CRM Records</div>
+        <button class="btn btn-primary" id="crmAddBtn">+ New Record</button>
+      </div>
+      <div class="card mb-4">
+        <div class="card-header"><h3>Search &amp; Filter</h3></div>
+        <div class="card-body">
+          <div class="form-row cols3">
+            <div class="form-group"><label>Township</label><input id="searchTwp" type="number" placeholder="Any" /></div>
+            <div class="form-group"><label>Range</label><input id="searchRange" type="number" placeholder="Any" /></div>
+            <div class="form-group"><label>Section</label><input id="searchSec" type="number" placeholder="Any" /></div>
+          </div>
+          <div class="form-group" style="max-width:200px;">
+            <label>Status</label>
+            <select id="searchStatus">
+              <option value="">All statuses</option>
+              <option>new</option><option>in-progress</option><option>closed</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="searchBtn">Search</button>
+          <button class="btn btn-ghost" id="searchAllBtn" style="margin-left:8px;">Show All</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Company</th><th>Contact</th><th>TRS Code</th><th>T</th><th>R</th><th>S</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody id="crmTbody"><tr class="empty-row"><td colspan="9">Run a search or click Show All</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import CSV -->
+    <div id="page-import" class="page">
+      <div class="section-title">Import CSV</div>
+      <div class="card">
+        <div class="card-header"><h3>Paste CSV Data</h3></div>
+        <div class="card-body">
+          <p class="text-muted mb-4">Required columns: <code>company, contact, status, township, range, section</code></p>
+          <div class="form-group">
+            <label>CSV Content</label>
+            <textarea id="csvText" rows="8" placeholder="company,contact,status,township,range,section&#10;Acme Oil,Jane Doe,new,25,9,14"></textarea>
+          </div>
+          <button class="btn btn-primary" id="csvImportBtn">Import Records</button>
+          <div id="csvOut" class="output-pre mt-4" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Exports -->
+    <div id="page-exports" class="page">
+      <div class="section-title">Export Tools</div>
+      <div class="two-col">
+        <div class="card">
+          <div class="card-header"><h3>Shapefile Export</h3></div>
+          <div class="card-body">
+            <p class="text-muted mb-4">Generates a Shapefile from all CRM records using Township/Range as coordinates.</p>
+            <button class="btn btn-primary" id="shapefileBtn">Generate Shapefile</button>
+            <div id="shapeOut" class="output-pre mt-4" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>OneDrive / SharePoint Export</h3></div>
+          <div class="card-body">
+            <p class="text-muted mb-4">Exports CSV to your OneDrive folder for SharePoint sync.</p>
+            <button class="btn btn-primary" id="shareBtn">Export to OneDrive</button>
+            <div id="shareOut" class="output-pre mt-4" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>PDF Report</h3></div>
+          <div class="card-body">
+            <p class="text-muted mb-4">Downloads a formatted PDF report of up to 100 CRM records.</p>
+            <a href="http://127.0.0.1:8000/crm/pdf-report" target="_blank" class="btn btn-outline">Download PDF Report</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Users -->
+    <div id="page-users" class="page">
+      <div class="flex justify-between items-center mb-4">
+        <div class="section-title" style="margin:0">User Management</div>
+        <button class="btn btn-primary" id="openCreateUserModal">+ Create User</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Email</th><th>Role</th></tr></thead>
+            <tbody id="usersTbody"><tr class="empty-row"><td colspan="2">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workbook Import -->
+    <div id="page-workbook-import" class="page">
+      <div class="section-title">Import Master Workbook</div>
+      <div class="card" style="max-width:700px;">
+        <div class="card-header"><h3>Upload Excel File</h3></div>
+        <div class="card-body">
+          <p class="text-muted mb-4">Upload <b>Master_TOMAHAWK_Report_20260402.xlsx</b>. Every worksheet will be ingested as its own dataset, and a left-nav button will be created for each tab.</p>
+          <div class="form-group">
+            <label>Workbook (.xlsx)</label>
+            <input id="workbookFile" type="file" accept=".xlsx" />
+          </div>
+          <button class="btn btn-primary" id="importWorkbookBtn">Import All Tabs</button>
+          <div id="workbookImportOut" class="output-pre mt-4" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workbook Tab Data -->
+    <div id="page-workbook-tab" class="page">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <div class="section-title" id="workbookTabTitle" style="margin:0">Workbook Tab</div>
+          <div class="text-muted" id="workbookTabMeta">Rows: —</div>
+        </div>
+      </div>
+      <div id="workbookCards" class="cards-grid"></div>
+    </div>
+
+    <!-- Invites -->
+    <div id="page-invites" class="page">
+      <div class="section-title">Invite Management</div>
+      <div class="two-col">
+        <div class="card">
+          <div class="card-header"><h3>Send Invite</h3></div>
+          <div class="card-body">
+            <div class="form-group"><label>Email</label><input id="inviteEmail" placeholder="user@example.com" /></div>
+            <div class="form-group"><label>Role</label>
+              <select id="inviteRole"><option value="employee">Employee</option><option value="manager">Manager</option></select>
+            </div>
+            <button class="btn btn-primary" id="inviteBtn">Generate Invite Token</button>
+            <div id="inviteOut" class="output-pre mt-4" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Accept Invite</h3></div>
+          <div class="card-body">
+            <div class="form-group"><label>Invite Token</label><input id="acceptToken" placeholder="Paste token here" /></div>
+            <div class="form-group"><label>New Password</label><input id="acceptPass" type="password" placeholder="Set a password" /></div>
+            <button class="btn btn-primary" id="acceptBtn">Accept &amp; Register</button>
+            <div id="acceptOut" class="output-pre mt-4" style="display:none;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Link Tokens -->
+    <div id="page-links" class="page">
+      <div class="section-title">Link Tokens</div>
+      <div class="card" style="max-width:480px;">
+        <div class="card-header"><h3>Generate Access Link</h3></div>
+        <div class="card-body">
+          <div class="form-group"><label>Permission</label>
+            <select id="linkPermission">
+              <option value="create_crm">Create CRM Records</option>
+              <option value="read_crm">Read CRM Records</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Valid for (hours)</label><input id="linkHours" type="number" value="24" /></div>
+          <button class="btn btn-primary" id="linkBtn">Generate Token</button>
+          <div id="linkOut" class="output-pre mt-4" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODAL: New CRM Record -->
+<div class="modal-overlay" id="crmModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>New CRM Record</h3>
+      <button class="close-btn" data-close="crmModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group"><label>Company</label><input id="crmCompany" placeholder="Acme Oil" /></div>
+        <div class="form-group"><label>Contact</label><input id="crmContact" placeholder="Jane Doe" /></div>
+      </div>
+      <div class="form-row cols3">
+        <div class="form-group"><label>Township</label><input id="crmTwp" type="number" value="25" /></div>
+        <div class="form-group"><label>Range</label><input id="crmRange" type="number" value="9" /></div>
+        <div class="form-group"><label>Section</label><input id="crmSec" type="number" value="14" /></div>
+      </div>
+      <div class="form-group"><label>Status</label>
+        <select id="crmStatus"><option>new</option><option>in-progress</option><option>closed</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="crmModal">Cancel</button>
+      <button class="btn btn-primary" id="createCrmBtn">Save Record</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Create User -->
+<div class="modal-overlay" id="createUserModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Create User</h3>
+      <button class="close-btn" data-close="createUserModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label>Email</label><input id="newEmail" type="email" placeholder="user@example.com" /></div>
+      <div class="form-group"><label>Password</label><input id="newPass" type="password" placeholder="Strong password" /></div>
+      <div class="form-group"><label>Role</label>
+        <select id="newRole"><option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="createUserModal">Cancel</button>
+      <button class="btn btn-primary" id="createUserBtn">Create User</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Forgot Credentials -->
+<div class="modal-overlay" id="forgotCredsModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Forgot Username / Password</h3>
+      <button class="close-btn" data-close="forgotCredsModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted mb-4">Submit your details and an email request will be sent to admin@localerp.com.</p>
+      <div class="form-group"><label>Your Email (recommended)</label><input id="forgotEmail" type="email" placeholder="you@example.com" /></div>
+      <div class="form-group"><label>Username (if known)</label><input id="forgotUsername" type="text" placeholder="Your username" /></div>
+      <div class="form-group"><label>Note</label><textarea id="forgotMessage" rows="4" placeholder="Optional details to help admin verify your account"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="forgotCredsModal">Cancel</button>
+      <button class="btn btn-primary" id="submitForgotCredsBtn">Submit Request</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOASTS -->
+<div id="toastContainer"></div>
+
+<script src="/frontend/app.js"></script>
+</body>
+</html>
