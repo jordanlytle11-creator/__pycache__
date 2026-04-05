@@ -434,9 +434,9 @@ function renderDashboardStatusBreakdown(records) {
 
   const sorted = [...statusData.entries()]
     .sort((a, b) => b[1].totalAcres - a[1].totalAcres || a[0].localeCompare(b[0]));
-  const topSeven = sorted.slice(0, 7);
+  const topEight = sorted.slice(0, 8);
   
-  container.innerHTML = topSeven
+  container.innerHTML = topEight
     .map(([status, data]) => `
       <div class="kpi-card">
         <div class="kpi-label">${esc(status)}</div>
