@@ -271,25 +271,44 @@ document.querySelectorAll('.nav-item[data-page]').forEach(item => {
   item.addEventListener('click', () => navigateTo(item.dataset.page));
 });
 
-function bindCrmHorizontalScrollAnywhere() {
-  const crmPage = document.getElementById('page-crm');
-  const tableWrap = crmPage ? crmPage.querySelector('.table-wrap') : null;
-  if (!crmPage || !tableWrap || crmPage.dataset.hScrollBound === '1') return;
+function syncCrmScrollBar() {
+  const viewport = document.getElementById('crmTableViewport');
+  const bar = document.getElementById('crmHScroll');
+  const inner = document.getElementById('crmHScrollInner');
+  const table = document.getElementById('crmTable');
+  if (!viewport || !bar || !inner || !table) return;
 
-  crmPage.dataset.hScrollBound = '1';
-  crmPage.addEventListener('wheel', (e) => {
-    if (!crmPage.classList.contains('active')) return;
-    if (tableWrap.scrollWidth <= tableWrap.clientWidth) return;
-
-    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    if (!delta) return;
-
-    tableWrap.scrollLeft += delta;
-    e.preventDefault();
-  }, { passive: false });
+  const tableWidth = table.scrollWidth;
+  inner.style.width = `${tableWidth}px`;
+  bar.style.display = tableWidth > viewport.clientWidth ? 'block' : 'none';
 }
 
-bindCrmHorizontalScrollAnywhere();
+function bindCrmScrollSync() {
+  const viewport = document.getElementById('crmTableViewport');
+  const bar = document.getElementById('crmHScroll');
+  if (!viewport || !bar || viewport.dataset.scrollSyncBound === '1') return;
+
+  viewport.dataset.scrollSyncBound = '1';
+  let syncing = false;
+
+  viewport.addEventListener('scroll', () => {
+    if (syncing) return;
+    syncing = true;
+    bar.scrollLeft = viewport.scrollLeft;
+    syncing = false;
+  });
+
+  bar.addEventListener('scroll', () => {
+    if (syncing) return;
+    syncing = true;
+    viewport.scrollLeft = bar.scrollLeft;
+    syncing = false;
+  });
+
+  window.addEventListener('resize', syncCrmScrollBar);
+}
+
+bindCrmScrollSync();
 
 // ── Modal helpers ──────────────────────────────────────────────
 function openModal(id) { document.getElementById(id).classList.add('open'); }
@@ -528,6 +547,7 @@ function renderCrmTable(records) {
     </tr>`).join('');
 
   bindCrmEditableCells();
+  syncCrmScrollBar();
 }
 
 // ── Workbook Ingestion + Cards ───────────────────────────────

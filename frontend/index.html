@@ -137,6 +137,23 @@
     .empty-row td { text-align: center; padding: 32px; color: var(--muted); font-style: italic; }
     td.crm-editable { cursor: pointer; }
     td.crm-editable:hover { background: #eff6ff; }
+    .crm-table-viewport {
+      max-height: calc(100vh - 360px);
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .crm-h-scroll {
+      position: sticky;
+      bottom: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      height: 14px;
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      display: none;
+      z-index: 2;
+    }
+    .crm-h-scroll-inner { height: 1px; }
 
     /* BADGES */
     .badge { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; }
@@ -364,12 +381,13 @@
         </div>
       </div>
       <div class="card">
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap crm-table-viewport" id="crmTableViewport">
+          <table id="crmTable">
             <thead id="crmThead"></thead>
             <tbody id="crmTbody"><tr class="empty-row"><td colspan="1">Run a search or click Show All</td></tr></tbody>
           </table>
         </div>
+        <div class="crm-h-scroll" id="crmHScroll"><div class="crm-h-scroll-inner" id="crmHScrollInner"></div></div>
       </div>
     </div>
 
