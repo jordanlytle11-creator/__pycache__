@@ -419,7 +419,10 @@ function renderDashboardStatusBreakdown(records) {
   const statusData = new Map();
   records.forEach((r) => {
     const status = (r.status || 'No Contact').trim() || 'No Contact';
-    const netAcres = parseFloat(r.net_acres) || 0;
+    const acresRaw = r.net_acres ?? r.column_24 ?? 0;
+    const acresText = String(acresRaw).replace(/,/g, '').trim();
+    const acresParsed = Number(acresText);
+    const netAcres = Number.isFinite(acresParsed) ? acresParsed : 0;
     
     if (!statusData.has(status)) {
       statusData.set(status, { count: 0, totalAcres: 0 });
@@ -431,13 +434,14 @@ function renderDashboardStatusBreakdown(records) {
 
   const sorted = [...statusData.entries()]
     .sort((a, b) => b[1].totalAcres - a[1].totalAcres || a[0].localeCompare(b[0]));
+  const topSeven = sorted.slice(0, 7);
   
-  container.innerHTML = sorted
+  container.innerHTML = topSeven
     .map(([status, data]) => `
       <div class="kpi-card">
         <div class="kpi-label">${esc(status)}</div>
         <div class="kpi-value">${data.totalAcres.toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
-        <div class="kpi-sub">${data.count} record${data.count !== 1 ? 's' : ''}</div>
+        <div class="kpi-sub">Net Acres · ${data.count} record${data.count !== 1 ? 's' : ''}</div>
       </div>
     `).join('');
 }
