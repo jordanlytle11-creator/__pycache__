@@ -626,12 +626,12 @@ function bindCrmHeaderInteractions() {
       const label = handle.dataset.columnLabel;
       if (!label) return;
       const startX = e.clientX;
-      const startW = state.widths[label] || 180;
+      const col = [...document.querySelectorAll('#crmColgroup col')].find((c) => c.dataset.columnLabel === label);
+      const startW = col ? (parseInt(col.style.width, 10) || state.widths[label] || 180) : (state.widths[label] || 180);
 
       const onMove = (moveEvt) => {
-        const next = Math.max(100, Math.min(700, startW + (moveEvt.clientX - startX)));
+        const next = Math.max(60, Math.min(700, startW + (moveEvt.clientX - startX)));
         state.widths[label] = next;
-        const col = [...document.querySelectorAll('#crmColgroup col')].find((c) => c.dataset.columnLabel === label);
         if (col) col.style.width = `${next}px`;
         syncCrmScrollBar();
       };
