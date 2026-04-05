@@ -138,6 +138,73 @@ const pageTitles = {
   links: 'Link Tokens',
 };
 
+const adminManagerCrmColumns = [
+  { label: 'AMI/AOI', keys: ['ami_aoi', 'oklahoma_county_tomahawk_project', 'column_1'] },
+  { label: 'STATE CODE', keys: ['state_code', 'column_2'] },
+  { label: 'COUNTY CODE', keys: ['county_code', 'column_3'] },
+  { label: 'T-R-S', keys: ['t_r_s', 'trs', 'column_4'], fallback: (record) => trsCode(record) },
+  { label: 'Location #', keys: ['location_number', 'column_5'] },
+  { label: 'Well Name', keys: ['well_name', 'column_6'] },
+  { label: 'DSU Name', keys: ['dsu_name', 'column_7'] },
+  { label: 'PAD NAME', keys: ['pad_name', 'column_8'] },
+  { label: 'LEASE #', keys: ['lease_number', 'column_9'] },
+  { label: 'LEASE NAME', keys: ['lease_name', 'company', 'column_10'] },
+  { label: 'STATE', keys: ['state', 'column_11'] },
+  { label: 'COUNTY', keys: ['county', 'column_12'] },
+  { label: 'LESSOR / OWNER', keys: ['lessor_owner', 'owner_name', 'owner', 'column_13'] },
+  { label: 'LESSEE', keys: ['lessee', 'column_14'] },
+  { label: 'LEASE DATE', keys: ['column_15', 'lease_date'], type: 'date' },
+  { label: 'VOL', keys: ['column_16', 'vol'] },
+  { label: 'PG', keys: ['column_17', 'pg'] },
+  { label: 'TWN', keys: ['township', 'twp', 'column_18'] },
+  { label: 'RNG', keys: ['range', 'rng', 'column_19'] },
+  { label: 'SEC', keys: ['section', 'sec', 'column_20'] },
+  { label: 'TRACT DESCRIPTION', keys: ['tract_description', 'column_21'] },
+  { label: 'STATUS', keys: ['status', 'column_22'], type: 'status' },
+  { label: 'GROSS ACRES', keys: ['gross_acres', 'column_23'] },
+  { label: 'NET ACRES', keys: ['net_acres', 'column_24'] },
+  { label: 'ROYALTY', keys: ['royalty', 'column_25'] },
+  { label: 'BONUS AGREED', keys: ['bonus_agreed', 'column_26'] },
+  { label: 'TERM (MONTH)', keys: ['term_months', 'term_month', 'column_27'] },
+  { label: 'EXTENSION (MONTH)', keys: ['extension_months', 'extension_month', 'column_28'] },
+  { label: 'LEASE AGENT', keys: ['lease_agent', 'landman', 'agent', 'column_29'] },
+  { label: 'MAILED', keys: ['column_30', 'mailed_date'], type: 'date' },
+  { label: 'LEASE AGENT NOTES', keys: ['lease_agent_notes', 'notes', 'column_31'] },
+  { label: 'TITLE DATE REQUESTED', keys: ['title_date_requested', 'column_32'], type: 'date' },
+  { label: 'TITLE VERIFIED', keys: ['title_verified', 'column_33'] },
+  { label: 'REQUEST NOTES', keys: ['request_notes', 'column_34'] },
+  { label: 'LEASE SIGNED AND RETURNED', keys: ['lease_signed_and_returned', 'column_35'] },
+  { label: 'BONUS PAID', keys: ['bonus_paid', 'column_36'] },
+  { label: 'RECORDED', keys: ['recorded', 'column_37'] },
+  { label: 'LPR COMPLETED', keys: ['lpr_completed', 'column_38'] },
+  { label: 'CURATIVE IDENTIFIED', keys: ['curative_identified', 'column_39'] },
+];
+
+const employeeCrmColumns = [
+  { label: 'LEASE NAME', keys: ['lease_name', 'company', 'column_10'] },
+  { label: 'STATE', keys: ['state', 'column_11'] },
+  { label: 'COUNTY', keys: ['county', 'column_12'] },
+  { label: 'LESSOR / OWNER', keys: ['lessor_owner', 'owner_name', 'owner', 'column_13'] },
+  { label: 'LESSEE', keys: ['lessee', 'column_14'] },
+  { label: 'LEASE DATE', keys: ['column_15', 'lease_date'], type: 'date' },
+  { label: 'VOL', keys: ['column_16', 'vol'] },
+  { label: 'PG', keys: ['column_17', 'pg'] },
+  { label: 'TWN', keys: ['township', 'twp', 'column_18'] },
+  { label: 'RNG', keys: ['range', 'rng', 'column_19'] },
+  { label: 'SEC', keys: ['section', 'sec', 'column_20'] },
+  { label: 'TRACT DESCRIPTION', keys: ['tract_description', 'column_21'] },
+  { label: 'STATUS', keys: ['status', 'column_22'], type: 'status' },
+  { label: 'GROSS ACRES', keys: ['gross_acres', 'column_23'] },
+  { label: 'NET ACRES', keys: ['net_acres', 'column_24'] },
+  { label: 'ROYALTY', keys: ['royalty', 'column_25'] },
+  { label: 'BONUS AGREED', keys: ['bonus_agreed', 'column_26'] },
+  { label: 'TERM (MONTH)', keys: ['term_months', 'term_month', 'column_27'] },
+  { label: 'EXTENSION (MONTH)', keys: ['extension_months', 'extension_month', 'column_28'] },
+  { label: 'LEASE AGENT', keys: ['lease_agent', 'landman', 'agent', 'column_29'] },
+  { label: 'MAILED', keys: ['column_30', 'mailed_date'], type: 'date' },
+  { label: 'LEASE AGENT NOTES', keys: ['lease_agent_notes', 'notes', 'column_31'] },
+];
+
 function navigateTo(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item[data-page]').forEach(n => n.classList.remove('active'));
@@ -274,6 +341,48 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function getCrmColumns() {
+  return currentUser && currentUser.role === 'employee' ? employeeCrmColumns : adminManagerCrmColumns;
+}
+
+function getRecordValue(record, keys = []) {
+  const extraData = record.extra_data || {};
+  for (const key of keys) {
+    const directValue = record[key];
+    if (directValue !== null && directValue !== undefined && String(directValue).trim() !== '') return directValue;
+    const extraValue = extraData[key];
+    if (extraValue !== null && extraValue !== undefined && String(extraValue).trim() !== '') return extraValue;
+  }
+  return null;
+}
+
+function formatCrmCell(record, column) {
+  const rawValue = getRecordValue(record, column.keys || []);
+  const value = rawValue ?? (column.fallback ? column.fallback(record) : null);
+  if (value === null || value === undefined || String(value).trim() === '') return '—';
+  if (column.type === 'status') return statusBadge(String(value));
+  if (column.type === 'date') return esc(fmtDate(value));
+  return esc(String(value));
+}
+
+function renderCrmTable(records) {
+  const columns = getCrmColumns();
+  const thead = document.getElementById('crmThead');
+  const tbody = document.getElementById('crmTbody');
+
+  thead.innerHTML = `<tr>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}</tr>`;
+
+  if (records.length === 0) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="${columns.length}">No records found</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = records.map((record) => `
+    <tr>
+      ${columns.map((column) => `<td>${formatCrmCell(record, column)}</td>`).join('')}
+    </tr>`).join('');
+}
+
 // ── Workbook Ingestion + Cards ───────────────────────────────
 async function loadWorkbookTabs() {
   try {
@@ -390,23 +499,7 @@ async function loadCRMRecords(params) {
   try {
     const path = qs ? `/crm/search?${qs}&limit=300000` : '/crm?limit=300000';
     const records = await apiJSON(path, { headers: authHeaders() });
-    const tbody = document.getElementById('crmTbody');
-    if (records.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No records found</td></tr>';
-    } else {
-      tbody.innerHTML = records.map(r => `
-        <tr>
-          <td>${r.id}</td>
-          <td>${esc(r.company || '—')}</td>
-          <td>${esc(r.contact || '—')}</td>
-          <td>${trsCode(r)}</td>
-          <td>${r.township || '—'}</td>
-          <td>${r.range || '—'}</td>
-          <td>${r.section || '—'}</td>
-          <td>${statusBadge(r.status)}</td>
-          <td>${fmtDate(r.created_at)}</td>
-        </tr>`).join('');
-    }
+    renderCrmTable(records);
   } catch (err) {
     showToast('Search failed: ' + err.message, 'error');
   }
