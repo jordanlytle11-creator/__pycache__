@@ -47,6 +47,46 @@ class CrmRecordBase(BaseModel):
 class CrmRecordCreate(CrmRecordBase):
     pass
 
+
+class CrmRecordUpdate(BaseModel):
+    company: Optional[str] = None
+    contact: Optional[str] = None
+    status: Optional[str] = None
+    township: Optional[int] = None
+    range: Optional[int] = None
+    section: Optional[int] = None
+    extra_data: Optional[Dict] = None
+    lease_agent: Optional[str] = None
+    lease_agent_notes: Optional[str] = None
+    lessor_owner: Optional[str] = None
+    lessee: Optional[str] = None
+    lease_date: Optional[date] = None
+    vol: Optional[str] = None
+    pg: Optional[str] = None
+    tract_description: Optional[str] = None
+    gross_acres: Optional[float] = None
+    net_acres: Optional[float] = None
+    royalty: Optional[str] = None
+    bonus_agreed: Optional[str] = None
+    term_months: Optional[int] = None
+    extension_months: Optional[int] = None
+    mailed_date: Optional[date] = None
+
+    @validator('status')
+    def update_status_enum(cls, v):
+        if v is None:
+            return v
+        value = v.strip()
+        return value or None
+
+    @validator('township', 'range', 'section')
+    def update_non_negative(cls, v):
+        if v is None:
+            return v
+        if v < 0:
+            raise ValueError('township/range/section must be non-negative')
+        return v
+
 class CrmRecordRead(CrmRecordBase):
     id: int
     trscode: str

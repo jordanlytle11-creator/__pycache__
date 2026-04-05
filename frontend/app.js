@@ -8,6 +8,8 @@ const API = window.location.origin;
 let token = null;
 let currentUser = null;  // { email, role }
 let workbookTabs = [];
+let currentCrmSearchParams = {};
+let currentCrmRecords = [];
 
 // ── Toast ─────────────────────────────────────────────────────
 function showToast(msg, type = 'info', duration = 3500) {
@@ -205,6 +207,47 @@ const employeeCrmColumns = [
   { label: 'LEASE AGENT NOTES', keys: ['lease_agent_notes', 'notes', 'column_31'] },
 ];
 
+const crmColumnEditors = {
+  'AMI/AOI': { extraKeys: ['ami_aoi'] },
+  'STATE CODE': { extraKeys: ['state_code'] },
+  'COUNTY CODE': { extraKeys: ['county_code'] },
+  'Location #': { extraKeys: ['location_number'] },
+  'Well Name': { extraKeys: ['well_name'] },
+  'DSU Name': { extraKeys: ['dsu_name'] },
+  'PAD NAME': { extraKeys: ['pad_name'] },
+  'LEASE #': { extraKeys: ['lease_number'] },
+  'LEASE NAME': { field: 'company', extraKeys: ['lease_name'] },
+  'STATE': { extraKeys: ['state'] },
+  'COUNTY': { extraKeys: ['county'] },
+  'LESSOR / OWNER': { field: 'lessor_owner', extraKeys: ['owner_name', 'owner'] },
+  'LESSEE': { field: 'lessee' },
+  'LEASE DATE': { field: 'lease_date', type: 'date' },
+  'VOL': { field: 'vol' },
+  'PG': { field: 'pg' },
+  'TWN': { field: 'township', type: 'int' },
+  'RNG': { field: 'range', type: 'int' },
+  'SEC': { field: 'section', type: 'int' },
+  'TRACT DESCRIPTION': { field: 'tract_description' },
+  'STATUS': { field: 'status' },
+  'GROSS ACRES': { field: 'gross_acres', type: 'float' },
+  'NET ACRES': { field: 'net_acres', type: 'float' },
+  'ROYALTY': { field: 'royalty' },
+  'BONUS AGREED': { field: 'bonus_agreed' },
+  'TERM (MONTH)': { field: 'term_months', type: 'int' },
+  'EXTENSION (MONTH)': { field: 'extension_months', type: 'int' },
+  'LEASE AGENT': { field: 'lease_agent' },
+  'MAILED': { field: 'mailed_date', type: 'date' },
+  'LEASE AGENT NOTES': { field: 'lease_agent_notes', extraKeys: ['notes'] },
+  'TITLE DATE REQUESTED': { extraKeys: ['title_date_requested'], type: 'date' },
+  'TITLE VERIFIED': { extraKeys: ['title_verified'] },
+  'REQUEST NOTES': { extraKeys: ['request_notes'] },
+  'LEASE SIGNED AND RETURNED': { extraKeys: ['lease_signed_and_returned'] },
+  'BONUS PAID': { extraKeys: ['bonus_paid'] },
+  'RECORDED': { extraKeys: ['recorded'] },
+  'LPR COMPLETED': { extraKeys: ['lpr_completed'] },
+  'CURATIVE IDENTIFIED': { extraKeys: ['curative_identified'] },
+};
+
 function navigateTo(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item[data-page]').forEach(n => n.classList.remove('active'));
@@ -345,6 +388,10 @@ function getCrmColumns() {
   return currentUser && currentUser.role === 'employee' ? employeeCrmColumns : adminManagerCrmColumns;
 }
 
+function getCrmColumnEditor(column) {
+  return crmColumnEditors[column.label] || null;
+}
+
 function getRecordValue(record, keys = []) {
   const extraData = record.extra_data || {};
   for (const key of keys) {
@@ -365,10 +412,86 @@ function formatCrmCell(record, column) {
   return esc(String(value));
 }
 
+function getCrmEditPromptValue(record, column) {
+  const rawValue = getRecordValue(record, column.keys || []);
+  if (rawValue === null || rawValue === undefined) return '';
+  return String(rawValue);
+}
+
+function normalizeEditedValue(rawValue, editor) {
+  const trimmed = rawValue.trim();
+  if (trimmed === '') return null;
+  if (editor.type === 'int') {
+    const parsed = parseInt(trimmed, 10);
+    if (Number.isNaN(parsed)) throw new Error('Enter a whole number');
+    return parsed;
+  }
+  if (editor.type === 'float') {
+    const parsed = parseFloat(trimmed);
+    if (Number.isNaN(parsed)) throw new Error('Enter a valid number');
+    return parsed;
+  }
+  return trimmed;
+}
+
+function buildCrmUpdatePayload(column, value) {
+  const editor = getCrmColumnEditor(column);
+  if (!editor) return null;
+
+  const normalizedValue = normalizeEditedValue(value, editor);
+  if (normalizedValue === null && ['company', 'township', 'range', 'section'].includes(editor.field)) {
+    throw new Error(`${column.label} cannot be empty`);
+  }
+  const payload = {};
+  if (editor.field) payload[editor.field] = normalizedValue;
+  if (editor.extraKeys && editor.extraKeys.length) {
+    payload.extra_data = {};
+    editor.extraKeys.forEach((key) => {
+      payload.extra_data[key] = normalizedValue;
+    });
+  }
+  return payload;
+}
+
+async function editCrmCell(recordIndex, columnIndex) {
+  const record = currentCrmRecords[recordIndex];
+  const column = getCrmColumns()[columnIndex];
+  const editor = getCrmColumnEditor(column);
+  if (!record || !column || !editor) return;
+
+  const currentValue = getCrmEditPromptValue(record, column);
+  const nextValue = window.prompt(`Edit ${column.label}`, currentValue);
+  if (nextValue === null || nextValue === currentValue) return;
+
+  try {
+    const payload = buildCrmUpdatePayload(column, nextValue);
+    if (!payload) return;
+    await apiJSON(`/crm/${record.id}`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    showToast(`${column.label} updated`, 'success');
+    await loadCRMRecords(currentCrmSearchParams);
+    await loadDashboard();
+  } catch (err) {
+    showToast('Update failed: ' + err.message, 'error');
+  }
+}
+
+function bindCrmEditableCells() {
+  document.querySelectorAll('td.crm-editable').forEach((cell) => {
+    cell.addEventListener('dblclick', () => {
+      editCrmCell(parseInt(cell.dataset.recordIndex, 10), parseInt(cell.dataset.columnIndex, 10));
+    });
+  });
+}
+
 function renderCrmTable(records) {
   const columns = getCrmColumns();
   const thead = document.getElementById('crmThead');
   const tbody = document.getElementById('crmTbody');
+  currentCrmRecords = records;
 
   thead.innerHTML = `<tr>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}</tr>`;
 
@@ -377,10 +500,12 @@ function renderCrmTable(records) {
     return;
   }
 
-  tbody.innerHTML = records.map((record) => `
+  tbody.innerHTML = records.map((record, recordIndex) => `
     <tr>
-      ${columns.map((column) => `<td>${formatCrmCell(record, column)}</td>`).join('')}
+      ${columns.map((column, columnIndex) => `<td class="${getCrmColumnEditor(column) ? 'crm-editable' : ''}" data-record-index="${recordIndex}" data-column-index="${columnIndex}">${formatCrmCell(record, column)}</td>`).join('')}
     </tr>`).join('');
+
+  bindCrmEditableCells();
 }
 
 // ── Workbook Ingestion + Cards ───────────────────────────────
@@ -479,6 +604,26 @@ document.getElementById('importWorkbookBtn').addEventListener('click', async () 
   }
 });
 
+document.getElementById('rebuildWorkbookBtn').addEventListener('click', async () => {
+  const outEl = document.getElementById('workbookImportOut');
+  try {
+    const data = await apiJSON('/admin/rebuild-crm-from-workbook', {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    outEl.textContent = JSON.stringify(data, null, 2);
+    outEl.style.display = 'block';
+    showToast(`Rebuilt ${data.crm_records_imported || 0} CRM records from stored workbook data`, 'success');
+    await loadWorkbookTabs();
+    await loadDashboard();
+    await loadCRMRecords(currentCrmSearchParams);
+  } catch (err) {
+    outEl.textContent = 'Error: ' + err.message;
+    outEl.style.display = 'block';
+    showToast('Rebuild failed: ' + err.message, 'error');
+  }
+});
+
 // ── CRM Records ────────────────────────────────────────────────
 document.getElementById('searchAllBtn').addEventListener('click', () => loadCRMRecords({}));
 document.getElementById('searchBtn').addEventListener('click', () => {
@@ -495,6 +640,7 @@ document.getElementById('searchBtn').addEventListener('click', () => {
 });
 
 async function loadCRMRecords(params) {
+  currentCrmSearchParams = { ...params };
   const qs = new URLSearchParams(params).toString();
   try {
     const path = qs ? `/crm/search?${qs}&limit=300000` : '/crm?limit=300000';

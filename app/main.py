@@ -25,6 +25,7 @@ from app.models import CrmRecord, User, Role, InviteToken, LinkControl
 from app.schemas import (
     CrmRecordCreate,
     CrmRecordRead,
+    CrmRecordUpdate,
     UserCreate,
     UserRead,
     UserUpdate,
@@ -575,6 +576,134 @@ def _merge_crm_payload(current: dict, incoming: dict) -> dict:
     return merged
 
 
+def _apply_crm_payload_to_record(record: CrmRecord, payload: dict, extra_data: Optional[dict] = None) -> None:
+    record.company = payload['company']
+    record.contact = payload['contact']
+    record.status = payload['status']
+    record.township = payload['township']
+    record.range = payload['range']
+    record.section = payload['section']
+    record.trscode = f"T{payload['township']}R{payload['range']}S{payload['section']}"
+    record.lease_agent = payload.get('lease_agent')
+    record.lease_agent_notes = payload.get('lease_agent_notes')
+    record.lessor_owner = payload.get('lessor_owner')
+    record.lessee = payload.get('lessee')
+    record.lease_date = payload.get('lease_date')
+    record.vol = payload.get('vol')
+    record.pg = payload.get('pg')
+    record.tract_description = payload.get('tract_description')
+    record.gross_acres = payload.get('gross_acres')
+    record.net_acres = payload.get('net_acres')
+    record.royalty = payload.get('royalty')
+    record.bonus_agreed = payload.get('bonus_agreed')
+    record.term_months = payload.get('term_months')
+    record.extension_months = payload.get('extension_months')
+    record.mailed_date = payload.get('mailed_date')
+    record.extra_data = extra_data if extra_data is not None else (payload.get('extra_data') or {})
+
+
+def _sync_crm_records_from_workbook_rows(db: Session, crm_rows: list[dict]) -> int:
+    db.execute(text('''
+        CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
+            tab_key TEXT NOT NULL,
+            source_row_number INTEGER NOT NULL,
+            crm_record_id INTEGER NOT NULL,
+            imported_at TEXT NOT NULL,
+            PRIMARY KEY (tab_key, source_row_number)
+        )
+    '''))
+
+    existing_imported_ids = [
+        row[0]
+        for row in db.execute(text('SELECT DISTINCT crm_record_id FROM workbook_crm_import_index')).fetchall()
+        if row[0] is not None
+    ]
+    if existing_imported_ids:
+        db.query(CrmRecord).filter(CrmRecord.id.in_(existing_imported_ids)).delete(synchronize_session=False)
+
+    db.execute(text('DELETE FROM workbook_crm_import_index'))
+
+    imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+    crm_records_imported = 0
+
+    for crm_row in crm_rows:
+        record_payload = crm_row['record']
+        db_record = CrmRecord()
+        _apply_crm_payload_to_record(db_record, record_payload)
+        db.add(db_record)
+        db.flush()
+
+        db.execute(text('''
+            INSERT INTO workbook_crm_import_index (tab_key, source_row_number, crm_record_id, imported_at)
+            VALUES (:tab_key, :source_row_number, :crm_record_id, :imported_at)
+        '''), {
+            'tab_key': crm_row['tab_key'],
+            'source_row_number': crm_row['source_row_number'],
+            'crm_record_id': db_record.id,
+            'imported_at': imported_at,
+        })
+        crm_records_imported += 1
+
+    return crm_records_imported
+
+
+def _collect_crm_rows_from_stored_workbook() -> tuple[str, list[WorkbookTabSummary], int, list[dict]]:
+    workbook_name = 'stored_workbook'
+    tabs: list[WorkbookTabSummary] = []
+    total_rows = 0
+    crm_rows: list[dict] = []
+
+    with engine.begin() as conn:
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS workbook_tabs_index (
+                tab_key TEXT PRIMARY KEY,
+                workbook_name TEXT NOT NULL DEFAULT '',
+                sheet_name TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                headers_json TEXT NOT NULL,
+                row_count INTEGER NOT NULL DEFAULT 0,
+                imported_at TEXT NOT NULL
+            )
+        '''))
+
+        index_rows = conn.execute(text('''
+            SELECT tab_key, workbook_name, sheet_name, table_name, headers_json, row_count
+            FROM workbook_tabs_index
+            ORDER BY tab_key
+        ''')).fetchall()
+
+        for row in index_rows:
+            tab_key, stored_workbook_name, sheet_name, table_name, headers_json, row_count = row
+            workbook_name = stored_workbook_name or workbook_name
+            headers = json.loads(headers_json)
+            quoted_cols = ', '.join([f'"{header}"' for header in headers])
+            sql = text(f'SELECT source_row_number, {quoted_cols} FROM "{table_name}" ORDER BY source_row_number')
+            table_rows = conn.execute(sql).mappings().all()
+
+            for table_row in table_rows:
+                source_row_number = table_row['source_row_number']
+                row_map = {header: table_row.get(header) for header in headers}
+                crm_payload = _build_crm_record_payload(sheet_name, tab_key, source_row_number, row_map)
+                if crm_payload:
+                    crm_rows.append({
+                        'tab_key': tab_key,
+                        'source_row_number': source_row_number,
+                        'record': crm_payload,
+                    })
+
+            tabs.append(WorkbookTabSummary(
+                tab_key=tab_key,
+                workbook_name=stored_workbook_name or sheet_name,
+                sheet_name=sheet_name,
+                table_name=table_name,
+                row_count=row_count,
+                headers=headers,
+            ))
+            total_rows += row_count
+
+    return workbook_name, tabs, total_rows, crm_rows
+
+
 @app.post('/token')
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
@@ -830,7 +959,7 @@ def import_excel_workbook(
 
     tabs: list[WorkbookTabSummary] = []
     total_rows = 0
-    crm_rows_by_key: dict[str, dict] = {}
+    crm_rows: list[dict] = []
 
     with engine.begin() as conn:
         conn.execute(text('''
@@ -913,19 +1042,11 @@ def import_excel_workbook(
 
                 crm_payload = _build_crm_record_payload(sheet.title, tab_key, source_row_number, row_map)
                 if crm_payload:
-                    crm_key = _crm_record_key(crm_payload)
-                    if crm_key:
-                        if crm_key not in crm_rows_by_key:
-                            crm_rows_by_key[crm_key] = {
-                                'record': crm_payload,
-                                'sources': [(tab_key, source_row_number)],
-                            }
-                        else:
-                            crm_rows_by_key[crm_key]['record'] = _merge_crm_payload(
-                                crm_rows_by_key[crm_key]['record'],
-                                crm_payload,
-                            )
-                            crm_rows_by_key[crm_key]['sources'].append((tab_key, source_row_number))
+                    crm_rows.append({
+                        'tab_key': tab_key,
+                        'source_row_number': source_row_number,
+                        'record': crm_payload,
+                    })
 
             imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
             conn.execute(text('''
@@ -962,104 +1083,32 @@ def import_excel_workbook(
         raise HTTPException(status_code=400, detail='No usable tabs found (missing headers)')
 
     try:
-        db.execute(text('''
-            CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
-                tab_key TEXT NOT NULL,
-                source_row_number INTEGER NOT NULL,
-                crm_record_id INTEGER NOT NULL,
-                imported_at TEXT NOT NULL,
-                PRIMARY KEY (tab_key, source_row_number)
-            )
-        '''))
-        db.execute(text('DELETE FROM workbook_crm_import_index'))
+        crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
-        imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-        existing_records = db.query(CrmRecord).all()
-        existing_by_key: dict[str, CrmRecord] = {}
-        for existing in existing_records:
-            key = _crm_record_key({
-                'company': existing.company,
-                'township': existing.township,
-                'range': existing.range,
-                'section': existing.section,
-            })
-            if not key:
-                continue
-            existing_by_key[key] = existing
+    return WorkbookImportResult(
+        workbook_name=workbook_name,
+        tabs_imported=len(tabs),
+        total_rows_imported=total_rows,
+        crm_records_imported=crm_records_imported,
+        tabs=tabs,
+    )
 
-        crm_records_imported = 0
-        for crm_key, crm_row in crm_rows_by_key.items():
-            record_payload = crm_row['record']
-            existing = existing_by_key.get(crm_key)
 
-            if existing:
-                merged_extra = {**(existing.extra_data or {}), **(record_payload['extra_data'] or {})}
-                existing.company = record_payload['company']
-                existing.contact = record_payload['contact']
-                existing.status = record_payload['status']
-                existing.township = record_payload['township']
-                existing.range = record_payload['range']
-                existing.section = record_payload['section']
-                existing.trscode = f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}"
-                existing.lease_agent = record_payload.get('lease_agent')
-                existing.lease_agent_notes = record_payload.get('lease_agent_notes')
-                existing.lessor_owner = record_payload.get('lessor_owner')
-                existing.lessee = record_payload.get('lessee')
-                existing.lease_date = record_payload.get('lease_date')
-                existing.vol = record_payload.get('vol')
-                existing.pg = record_payload.get('pg')
-                existing.tract_description = record_payload.get('tract_description')
-                existing.gross_acres = record_payload.get('gross_acres')
-                existing.net_acres = record_payload.get('net_acres')
-                existing.royalty = record_payload.get('royalty')
-                existing.bonus_agreed = record_payload.get('bonus_agreed')
-                existing.term_months = record_payload.get('term_months')
-                existing.extension_months = record_payload.get('extension_months')
-                existing.mailed_date = record_payload.get('mailed_date')
-                existing.extra_data = merged_extra
-                db_record = existing
-            else:
-                db_record = CrmRecord(
-                    company=record_payload['company'],
-                    contact=record_payload['contact'],
-                    status=record_payload['status'],
-                    township=record_payload['township'],
-                    range=record_payload['range'],
-                    section=record_payload['section'],
-                    trscode=f"T{record_payload['township']}R{record_payload['range']}S{record_payload['section']}",
-                    lease_agent=record_payload.get('lease_agent'),
-                    lease_agent_notes=record_payload.get('lease_agent_notes'),
-                    lessor_owner=record_payload.get('lessor_owner'),
-                    lessee=record_payload.get('lessee'),
-                    lease_date=record_payload.get('lease_date'),
-                    vol=record_payload.get('vol'),
-                    pg=record_payload.get('pg'),
-                    tract_description=record_payload.get('tract_description'),
-                    gross_acres=record_payload.get('gross_acres'),
-                    net_acres=record_payload.get('net_acres'),
-                    royalty=record_payload.get('royalty'),
-                    bonus_agreed=record_payload.get('bonus_agreed'),
-                    term_months=record_payload.get('term_months'),
-                    extension_months=record_payload.get('extension_months'),
-                    mailed_date=record_payload.get('mailed_date'),
-                    extra_data=record_payload['extra_data'],
-                )
-                db.add(db_record)
-                db.flush()
-                existing_by_key[crm_key] = db_record
+@app.post('/admin/rebuild-crm-from-workbook', response_model=WorkbookImportResult)
+def rebuild_crm_from_workbook(
+    user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db),
+):
+    workbook_name, tabs, total_rows, crm_rows = _collect_crm_rows_from_stored_workbook()
+    if not tabs:
+        raise HTTPException(status_code=400, detail='No stored workbook data found')
 
-            for tab_key, source_row_number in crm_row['sources']:
-                db.execute(text('''
-                    INSERT INTO workbook_crm_import_index (tab_key, source_row_number, crm_record_id, imported_at)
-                    VALUES (:tab_key, :source_row_number, :crm_record_id, :imported_at)
-                '''), {
-                    'tab_key': tab_key,
-                    'source_row_number': source_row_number,
-                    'crm_record_id': db_record.id,
-                    'imported_at': imported_at,
-                })
-
-            crm_records_imported += 1
+    try:
+        crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
         db.commit()
     except Exception:
         db.rollback()
@@ -1194,6 +1243,33 @@ def create_record_link(record: CrmRecordCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_record)
     return db_record
+
+
+@app.patch('/crm/{record_id}', response_model=CrmRecordRead)
+def update_record(record_id: int, update: CrmRecordUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    record = db.query(CrmRecord).filter(CrmRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail='CRM record not found')
+
+    updates = update.dict(exclude_unset=True)
+    extra_updates = updates.pop('extra_data', None)
+
+    for field, value in updates.items():
+        setattr(record, field, value)
+
+    if extra_updates is not None:
+        merged_extra = dict(record.extra_data or {})
+        for key, value in extra_updates.items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                merged_extra.pop(key, None)
+            else:
+                merged_extra[key] = value
+        record.extra_data = merged_extra
+
+    record.trscode = f"T{record.township}R{record.range}S{record.section}"
+    db.commit()
+    db.refresh(record)
+    return record
 
 
 @app.get('/crm', response_model=List[CrmRecordRead])

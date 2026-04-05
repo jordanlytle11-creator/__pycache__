@@ -135,6 +135,8 @@
     tbody tr:hover { background: #f8fafc; }
     tbody td { padding: 11px 14px; vertical-align: middle; }
     .empty-row td { text-align: center; padding: 32px; color: var(--muted); font-style: italic; }
+    td.crm-editable { cursor: pointer; }
+    td.crm-editable:hover { background: #eff6ff; }
 
     /* BADGES */
     .badge { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; }
@@ -335,6 +337,7 @@
       <div class="card mb-4">
         <div class="card-header"><h3>Search &amp; Filter</h3></div>
         <div class="card-body">
+          <div class="text-muted mb-4">Double-click a CRM table cell to edit and save it.</div>
           <div class="form-row cols3">
             <div class="form-group"><label>Township</label><input id="searchTwp" type="number" placeholder="Any" /></div>
             <div class="form-group"><label>Range</label><input id="searchRange" type="number" placeholder="Any" /></div>
@@ -445,6 +448,7 @@
             <input id="workbookFile" type="file" accept=".xlsx" />
           </div>
           <button class="btn btn-primary" id="importWorkbookBtn">Import Workbook Data</button>
+          <button class="btn btn-ghost" id="rebuildWorkbookBtn" style="margin-left:8px;">Rebuild CRM From Stored Workbook</button>
           <div id="workbookImportOut" class="output-pre mt-4" style="display:none;"></div>
         </div>
       </div>
