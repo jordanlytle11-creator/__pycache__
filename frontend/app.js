@@ -397,8 +397,14 @@ document.getElementById('submitForgotCredsBtn').addEventListener('click', async 
 async function loadDashboard() {
   try {
     const records = await apiJSON('/crm?limit=300000', { headers: authHeaders() });
-    const total = records.length;
+    
+    // Ensure records is an array
+    if (!Array.isArray(records)) {
+      showToast('Dashboard data is invalid', 'error');
+      return;
+    }
 
+    const total = records.length;
     const totalEl = document.getElementById('kpiTotal');
     if (totalEl) totalEl.textContent = total;
     renderDashboardStatusBreakdown(records);
@@ -411,13 +417,15 @@ function renderDashboardStatusBreakdown(records) {
   const container = document.getElementById('dashStatusBreakdown');
   if (!container) return;
 
-  if (!records.length) {
+  // Ensure records is an array
+  if (!Array.isArray(records) || records.length === 0) {
     container.innerHTML = '<div class="text-muted" style="padding: 20px;">No status data yet</div>';
     return;
   }
 
   const statusData = new Map();
   records.forEach((r) => {
+    if (!r) return; // Skip null/undefined records
     const status = (r.status || 'No Contact').trim() || 'No Contact';
     const acresRaw = r.net_acres ?? r.column_24 ?? 0;
     const acresText = String(acresRaw).replace(/,/g, '').trim();
@@ -436,6 +444,11 @@ function renderDashboardStatusBreakdown(records) {
     .sort((a, b) => b[1].totalAcres - a[1].totalAcres || a[0].localeCompare(b[0]));
   const topEight = sorted.slice(0, 8);
   
+  if (topEight.length === 0) {
+    container.innerHTML = '<div class="text-muted" style="padding: 20px;">No status data yet</div>';
+    return;
+  }
+
   container.innerHTML = topEight
     .map(([status, data]) => `
       <div class="kpi-card">
@@ -835,9 +848,11 @@ function renderCurrentCrmView() {
 async function loadWorkbookTabs() {
   try {
     const tabs = await apiJSON('/crm/workbook-tabs', { headers: authHeaders() });
-    workbookTabs = tabs;
-    renderWorkbookNav(tabs);
+    // Ensure tabs is an array
+    workbookTabs = Array.isArray(tabs) ? tabs : [];
+    renderWorkbookNav(workbookTabs);
   } catch (err) {
+    workbookTabs = [];
     renderWorkbookNav([]);
   }
 }
@@ -1004,10 +1019,19 @@ async function loadCRMRecords(params) {
   try {
     const path = qs ? `/crm/search?${qs}&limit=300000` : '/crm?limit=300000';
     const records = await apiJSON(path, { headers: authHeaders() });
-    currentCrmRawRecords = records;
+    
+    // Ensure records is an array
+    if (!Array.isArray(records)) {
+      showToast('CRM data is invalid', 'error');
+      currentCrmRawRecords = [];
+    } else {
+      currentCrmRawRecords = records;
+    }
     renderCurrentCrmView();
   } catch (err) {
     showToast('Search failed: ' + err.message, 'error');
+    currentCrmRawRecords = [];
+    renderCurrentCrmView();
   }
 }
 
