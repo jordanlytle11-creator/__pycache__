@@ -9,7 +9,10 @@ if os.getenv("RENDER"):
 	default_db_path = Path("/var/data/local_erp.db")
 
 db_path = Path(os.getenv("LOCAL_ERP_DB_PATH", str(default_db_path)))
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{db_path}")
+if os.getenv("LOCAL_ERP_DB_PATH"):
+	SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
+else:
+	SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{db_path}")
 
 engine_kwargs = {}
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
