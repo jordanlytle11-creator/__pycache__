@@ -399,7 +399,8 @@ async function loadDashboard() {
     const records = await apiJSON('/crm?limit=300000', { headers: authHeaders() });
     const total = records.length;
 
-    document.getElementById('kpiTotal').textContent = total;
+    const totalEl = document.getElementById('kpiTotal');
+    if (totalEl) totalEl.textContent = total;
     renderDashboardStatusBreakdown(records);
   } catch (err) {
     showToast('Failed to load dashboard: ' + err.message, 'error');
@@ -1007,7 +1008,10 @@ async function loadCRMRecords(params) {
 }
 
 // ── CRM Record Modal ───────────────────────────────────────────
-document.getElementById('dashAddBtn').addEventListener('click', () => openModal('crmModal'));
+const dashAddBtn = document.getElementById('dashAddBtn');
+if (dashAddBtn) {
+  dashAddBtn.addEventListener('click', () => openModal('crmModal'));
+}
 document.getElementById('crmAddBtn').addEventListener('click', () => openModal('crmModal'));
 
 document.getElementById('createCrmBtn').addEventListener('click', async () => {
