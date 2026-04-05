@@ -20,7 +20,7 @@ import re
 import smtplib
 
 from app import models
-from app.db import SessionLocal, engine
+from app.db import SessionLocal, engine, db_path
 from app.models import CrmRecord, User, Role, InviteToken, LinkControl
 from app.schemas import (
     CrmRecordCreate,
@@ -76,6 +76,7 @@ app = FastAPI(title='Local ERP/CRM MVP')
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 FORGOT_CREDENTIALS_LOG = Path(__file__).resolve().parents[1] / "forgot_credentials_requests.log"
 INVITE_REQUESTS_LOG = Path(__file__).resolve().parents[1] / "invite_requests.log"
+WORKBOOK_STORAGE_PATH = Path(os.getenv('LOCAL_ERP_WORKBOOK_PATH', str(db_path.with_name('stored_workbook.xlsx'))))
 
 # security utils
 SECRET_KEY = os.getenv('LOCAL_ERP_SECRET_KEY', 'change-this-secret-in-production')
@@ -705,6 +706,166 @@ def _collect_crm_rows_from_stored_workbook() -> tuple[str, list[WorkbookTabSumma
     return workbook_name, tabs, total_rows, crm_rows
 
 
+def _save_workbook_file(content: bytes) -> None:
+    WORKBOOK_STORAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    WORKBOOK_STORAGE_PATH.write_bytes(content)
+
+
+def _import_workbook_content(content: bytes, workbook_name: str, db: Session) -> WorkbookImportResult:
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        raise HTTPException(status_code=500, detail='openpyxl is required for Excel import')
+
+    if not content:
+        raise HTTPException(status_code=400, detail='Uploaded file is empty')
+
+    try:
+        workbook = load_workbook(filename=io.BytesIO(content), data_only=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f'Invalid Excel file: {exc}')
+
+    tabs: list[WorkbookTabSummary] = []
+    total_rows = 0
+    crm_rows: list[dict] = []
+
+    with engine.begin() as conn:
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS workbook_tabs_index (
+                tab_key TEXT PRIMARY KEY,
+                workbook_name TEXT NOT NULL DEFAULT '',
+                sheet_name TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                headers_json TEXT NOT NULL,
+                row_count INTEGER NOT NULL DEFAULT 0,
+                imported_at TEXT NOT NULL
+            )
+        '''))
+        idx_columns = {
+            row[1]
+            for row in conn.execute(text('PRAGMA table_info(workbook_tabs_index)')).fetchall()
+        }
+        if 'workbook_name' not in idx_columns:
+            conn.execute(text("ALTER TABLE workbook_tabs_index ADD COLUMN workbook_name TEXT NOT NULL DEFAULT ''"))
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
+                tab_key TEXT NOT NULL,
+                source_row_number INTEGER NOT NULL,
+                crm_record_id INTEGER NOT NULL,
+                imported_at TEXT NOT NULL,
+                PRIMARY KEY (tab_key, source_row_number)
+            )
+        '''))
+
+        for idx, sheet in enumerate(workbook.worksheets, start=1):
+            if sheet.max_row < 1:
+                continue
+
+            header_row_number, headers_raw = _detect_header_row(sheet)
+
+            normalized_names: list[str] = []
+            seen_names: set[str] = set()
+            for col_idx, header in enumerate(headers_raw, start=1):
+                header_value = str(header).strip() if header is not None else f'column_{col_idx}'
+                normalized_names.append(_normalize_column_name(header_value, seen_names))
+
+            tab_key = f'tab_{idx}'
+            table_name = _normalize_table_name(sheet.title, idx)
+
+            conn.execute(text(f'CREATE TABLE IF NOT EXISTS "{table_name}" (id INTEGER PRIMARY KEY AUTOINCREMENT, source_row_number INTEGER)'))
+
+            existing_cols = {
+                row[1]
+                for row in conn.execute(text(f'PRAGMA table_info("{table_name}")')).fetchall()
+            }
+
+            for col in normalized_names:
+                if col not in existing_cols:
+                    conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" TEXT'))
+
+            conn.execute(text(f'DELETE FROM "{table_name}"'))
+            insert_cols = ', '.join(['source_row_number'] + [f'"{col}"' for col in normalized_names])
+            insert_placeholders = ', '.join([':source_row_number'] + [f':{col}' for col in normalized_names])
+            insert_sql = text(f'INSERT INTO "{table_name}" ({insert_cols}) VALUES ({insert_placeholders})')
+            imported_rows = 0
+
+            for source_row_number, row in enumerate(
+                sheet.iter_rows(min_row=header_row_number + 1, values_only=True),
+                start=header_row_number + 1,
+            ):
+                row_values = list(row)
+                if not _row_has_values(row_values):
+                    continue
+
+                payload = {'source_row_number': source_row_number}
+                row_map: dict[str, Optional[str]] = {}
+                for col_index, col in enumerate(normalized_names):
+                    cell_value = row_values[col_index] if col_index < len(row_values) else None
+                    normalized_value = _stringify_cell(cell_value)
+                    payload[col] = normalized_value
+                    row_map[col] = normalized_value
+
+                conn.execute(insert_sql, payload)
+                imported_rows += 1
+
+                crm_payload = _build_crm_record_payload(sheet.title, tab_key, source_row_number, row_map)
+                if crm_payload:
+                    crm_rows.append({
+                        'tab_key': tab_key,
+                        'source_row_number': source_row_number,
+                        'record': crm_payload,
+                    })
+
+            imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+            conn.execute(text('''
+                INSERT INTO workbook_tabs_index (tab_key, workbook_name, sheet_name, table_name, headers_json, row_count, imported_at)
+                VALUES (:tab_key, :workbook_name, :sheet_name, :table_name, :headers_json, :row_count, :imported_at)
+                ON CONFLICT(tab_key) DO UPDATE SET
+                    workbook_name=excluded.workbook_name,
+                    sheet_name=excluded.sheet_name,
+                    table_name=excluded.table_name,
+                    headers_json=excluded.headers_json,
+                    row_count=excluded.row_count,
+                    imported_at=excluded.imported_at
+            '''), {
+                'tab_key': tab_key,
+                'workbook_name': workbook_name,
+                'sheet_name': sheet.title,
+                'table_name': table_name,
+                'headers_json': json.dumps(normalized_names),
+                'row_count': imported_rows,
+                'imported_at': imported_at,
+            })
+
+            total_rows += imported_rows
+            tabs.append(WorkbookTabSummary(
+                tab_key=tab_key,
+                workbook_name=workbook_name,
+                sheet_name=sheet.title,
+                table_name=table_name,
+                row_count=imported_rows,
+                headers=normalized_names,
+            ))
+
+    if not tabs:
+        raise HTTPException(status_code=400, detail='No usable tabs found (missing headers)')
+
+    try:
+        crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return WorkbookImportResult(
+        workbook_name=workbook_name,
+        tabs_imported=len(tabs),
+        total_rows_imported=total_rows,
+        crm_records_imported=crm_records_imported,
+        tabs=tabs,
+    )
+
+
 @app.post('/token')
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
@@ -942,161 +1103,12 @@ def import_excel_workbook(
     user: User = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
 ):
-    try:
-        from openpyxl import load_workbook
-    except ImportError:
-        raise HTTPException(status_code=500, detail='openpyxl is required for Excel import')
-
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail='Uploaded file is empty')
-
-    try:
-        workbook = load_workbook(filename=io.BytesIO(content), data_only=True)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f'Invalid Excel file: {exc}')
-
     workbook_name = file.filename or 'uploaded_workbook.xlsx'
-
-    tabs: list[WorkbookTabSummary] = []
-    total_rows = 0
-    crm_rows: list[dict] = []
-
-    with engine.begin() as conn:
-        conn.execute(text('''
-            CREATE TABLE IF NOT EXISTS workbook_tabs_index (
-                tab_key TEXT PRIMARY KEY,
-                workbook_name TEXT NOT NULL DEFAULT '',
-                sheet_name TEXT NOT NULL,
-                table_name TEXT NOT NULL,
-                headers_json TEXT NOT NULL,
-                row_count INTEGER NOT NULL DEFAULT 0,
-                imported_at TEXT NOT NULL
-            )
-        '''))
-        idx_columns = {
-            row[1]
-            for row in conn.execute(text('PRAGMA table_info(workbook_tabs_index)')).fetchall()
-        }
-        if 'workbook_name' not in idx_columns:
-            conn.execute(text("ALTER TABLE workbook_tabs_index ADD COLUMN workbook_name TEXT NOT NULL DEFAULT ''"))
-        conn.execute(text('''
-            CREATE TABLE IF NOT EXISTS workbook_crm_import_index (
-                tab_key TEXT NOT NULL,
-                source_row_number INTEGER NOT NULL,
-                crm_record_id INTEGER NOT NULL,
-                imported_at TEXT NOT NULL,
-                PRIMARY KEY (tab_key, source_row_number)
-            )
-        '''))
-
-        for idx, sheet in enumerate(workbook.worksheets, start=1):
-            if sheet.max_row < 1:
-                continue
-
-            header_row_number, headers_raw = _detect_header_row(sheet)
-
-            normalized_names: list[str] = []
-            seen_names: set[str] = set()
-            for col_idx, header in enumerate(headers_raw, start=1):
-                header_value = str(header).strip() if header is not None else f'column_{col_idx}'
-                normalized_names.append(_normalize_column_name(header_value, seen_names))
-
-            tab_key = f'tab_{idx}'
-            table_name = _normalize_table_name(sheet.title, idx)
-
-            conn.execute(text(f'CREATE TABLE IF NOT EXISTS "{table_name}" (id INTEGER PRIMARY KEY AUTOINCREMENT, source_row_number INTEGER)'))
-
-            existing_cols = {
-                row[1]
-                for row in conn.execute(text(f'PRAGMA table_info("{table_name}")')).fetchall()
-            }
-
-            for col in normalized_names:
-                if col not in existing_cols:
-                    conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" TEXT'))
-
-            conn.execute(text(f'DELETE FROM "{table_name}"'))
-            insert_cols = ', '.join(['source_row_number'] + [f'"{col}"' for col in normalized_names])
-            insert_placeholders = ', '.join([':source_row_number'] + [f':{col}' for col in normalized_names])
-            insert_sql = text(f'INSERT INTO "{table_name}" ({insert_cols}) VALUES ({insert_placeholders})')
-            imported_rows = 0
-
-            for source_row_number, row in enumerate(
-                sheet.iter_rows(min_row=header_row_number + 1, values_only=True),
-                start=header_row_number + 1,
-            ):
-                row_values = list(row)
-                if not _row_has_values(row_values):
-                    continue
-
-                payload = {'source_row_number': source_row_number}
-                row_map: dict[str, Optional[str]] = {}
-                for col_index, col in enumerate(normalized_names):
-                    cell_value = row_values[col_index] if col_index < len(row_values) else None
-                    normalized_value = _stringify_cell(cell_value)
-                    payload[col] = normalized_value
-                    row_map[col] = normalized_value
-
-                conn.execute(insert_sql, payload)
-                imported_rows += 1
-
-                crm_payload = _build_crm_record_payload(sheet.title, tab_key, source_row_number, row_map)
-                if crm_payload:
-                    crm_rows.append({
-                        'tab_key': tab_key,
-                        'source_row_number': source_row_number,
-                        'record': crm_payload,
-                    })
-
-            imported_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-            conn.execute(text('''
-                INSERT INTO workbook_tabs_index (tab_key, workbook_name, sheet_name, table_name, headers_json, row_count, imported_at)
-                VALUES (:tab_key, :workbook_name, :sheet_name, :table_name, :headers_json, :row_count, :imported_at)
-                ON CONFLICT(tab_key) DO UPDATE SET
-                    workbook_name=excluded.workbook_name,
-                    sheet_name=excluded.sheet_name,
-                    table_name=excluded.table_name,
-                    headers_json=excluded.headers_json,
-                    row_count=excluded.row_count,
-                    imported_at=excluded.imported_at
-            '''), {
-                'tab_key': tab_key,
-                'workbook_name': workbook_name,
-                'sheet_name': sheet.title,
-                'table_name': table_name,
-                'headers_json': json.dumps(normalized_names),
-                'row_count': imported_rows,
-                'imported_at': imported_at,
-            })
-
-            total_rows += imported_rows
-            tabs.append(WorkbookTabSummary(
-                tab_key=tab_key,
-                workbook_name=workbook_name,
-                sheet_name=sheet.title,
-                table_name=table_name,
-                row_count=imported_rows,
-                headers=normalized_names,
-            ))
-
-    if not tabs:
-        raise HTTPException(status_code=400, detail='No usable tabs found (missing headers)')
-
-    try:
-        crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-
-    return WorkbookImportResult(
-        workbook_name=workbook_name,
-        tabs_imported=len(tabs),
-        total_rows_imported=total_rows,
-        crm_records_imported=crm_records_imported,
-        tabs=tabs,
-    )
+    _save_workbook_file(content)
+    return _import_workbook_content(content, workbook_name, db)
 
 
 @app.post('/admin/rebuild-crm-from-workbook', response_model=WorkbookImportResult)
@@ -1106,7 +1118,10 @@ def rebuild_crm_from_workbook(
 ):
     workbook_name, tabs, total_rows, crm_rows = _collect_crm_rows_from_stored_workbook()
     if not tabs:
-        raise HTTPException(status_code=400, detail='No stored workbook data found')
+        if not WORKBOOK_STORAGE_PATH.exists():
+            raise HTTPException(status_code=400, detail='No stored workbook data found')
+        content = WORKBOOK_STORAGE_PATH.read_bytes()
+        return _import_workbook_content(content, WORKBOOK_STORAGE_PATH.name, db)
 
     try:
         crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
@@ -1195,6 +1210,8 @@ def get_workbook_tab_rows(tab_key: str, limit: int = 200, user: User = Depends(r
 @app.get('/admin/workbook-storage-status', response_model=WorkbookStorageStatus)
 def get_workbook_storage_status(user: User = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     has_workbook_data = False
+    has_workbook_file = WORKBOOK_STORAGE_PATH.exists()
+    workbook_file_name = WORKBOOK_STORAGE_PATH.name if has_workbook_file else None
     tabs_count = 0
     workbook_rows = 0
     crm_rows_mapped = 0
@@ -1214,6 +1231,8 @@ def get_workbook_storage_status(user: User = Depends(require_manager_or_admin), 
     crm_records_count = db.query(CrmRecord).count()
     return WorkbookStorageStatus(
         has_workbook_data=has_workbook_data,
+        has_workbook_file=has_workbook_file,
+        workbook_file_name=workbook_file_name,
         tabs_count=tabs_count,
         workbook_rows=workbook_rows,
         crm_rows_mapped=crm_rows_mapped,

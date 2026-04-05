@@ -24,5 +24,7 @@ services:
           property: connectionString
       - key: LOCAL_ERP_DB_PATH
         value: /var/data/local_erp.db
+      - key: LOCAL_ERP_WORKBOOK_PATH
+        value: /var/data/stored_workbook.xlsx
       - key: LOCAL_ERP_ADMIN_EMAIL
         value: admin@localerp.com
