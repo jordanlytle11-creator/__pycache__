@@ -11,6 +11,10 @@ services:
     region: oregon
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: local-erp-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: LOCAL_ERP_SECRET_KEY
         generateValue: true
@@ -18,5 +22,7 @@ services:
         fromDatabase:
           name: local-erp-db
           property: connectionString
+      - key: LOCAL_ERP_DB_PATH
+        value: /var/data/local_erp.db
       - key: LOCAL_ERP_ADMIN_EMAIL
         value: admin@localerp.com
