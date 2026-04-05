@@ -549,9 +549,9 @@ async function loadWorkbookStorageStatus() {
     const s = await apiJSON('/admin/workbook-storage-status', { headers: authHeaders() });
     el.style.display = 'block';
     if (s.has_workbook_data) {
-      el.textContent = `Stored workbook data: READY\nStored workbook file: ${s.has_workbook_file ? `READY (${s.workbook_file_name})` : 'NOT FOUND'}\nTabs: ${s.tabs_count}\nWorkbook rows: ${s.workbook_rows}\nCRM rows mapped: ${s.crm_rows_mapped}\nCurrent CRM records: ${s.crm_records_count}`;
+      el.textContent = `Stored workbook data: READY\nStored workbook file: ${s.has_workbook_file ? `READY (${s.workbook_file_name})` : 'NOT FOUND'}\nStored workbook backup: ${s.has_workbook_backup ? `READY (${s.workbook_backup_name})` : 'NOT FOUND'}\nTabs: ${s.tabs_count}\nWorkbook rows: ${s.workbook_rows}\nCRM rows mapped: ${s.crm_rows_mapped}\nCurrent CRM records: ${s.crm_records_count}`;
     } else {
-      el.textContent = `Stored workbook data: NOT FOUND\nStored workbook file: ${s.has_workbook_file ? `READY (${s.workbook_file_name})` : 'NOT FOUND'}\nTabs: ${s.tabs_count}\nWorkbook rows: ${s.workbook_rows}\nCRM rows mapped: ${s.crm_rows_mapped}\nCurrent CRM records: ${s.crm_records_count}`;
+      el.textContent = `Stored workbook data: NOT FOUND\nStored workbook file: ${s.has_workbook_file ? `READY (${s.workbook_file_name})` : 'NOT FOUND'}\nStored workbook backup: ${s.has_workbook_backup ? `READY (${s.workbook_backup_name})` : 'NOT FOUND'}\nTabs: ${s.tabs_count}\nWorkbook rows: ${s.workbook_rows}\nCRM rows mapped: ${s.crm_rows_mapped}\nCurrent CRM records: ${s.crm_records_count}`;
     }
   } catch (err) {
     el.style.display = 'block';

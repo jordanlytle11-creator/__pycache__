@@ -711,6 +711,38 @@ def _save_workbook_file(content: bytes) -> None:
     WORKBOOK_STORAGE_PATH.write_bytes(content)
 
 
+def _save_workbook_backup(db: Session, workbook_name: str, content: bytes) -> None:
+    db.execute(text('''
+        CREATE TABLE IF NOT EXISTS workbook_file_store (
+            id INTEGER PRIMARY KEY,
+            workbook_name TEXT NOT NULL,
+            content BLOB NOT NULL,
+            imported_at TEXT NOT NULL
+        )
+    '''))
+    db.execute(text('DELETE FROM workbook_file_store'))
+    db.execute(text('''
+        INSERT INTO workbook_file_store (id, workbook_name, content, imported_at)
+        VALUES (1, :workbook_name, :content, :imported_at)
+    '''), {
+        'workbook_name': workbook_name,
+        'content': content,
+        'imported_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+    })
+
+
+def _load_workbook_backup() -> tuple[Optional[str], Optional[bytes]]:
+    with engine.begin() as conn:
+        has_store = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='workbook_file_store'" )).fetchone() is not None
+        if not has_store:
+            return None, None
+
+        row = conn.execute(text('SELECT workbook_name, content FROM workbook_file_store WHERE id = 1')).fetchone()
+        if not row:
+            return None, None
+        return row[0], row[1]
+
+
 def _import_workbook_content(content: bytes, workbook_name: str, db: Session) -> WorkbookImportResult:
     try:
         from openpyxl import load_workbook
@@ -851,6 +883,7 @@ def _import_workbook_content(content: bytes, workbook_name: str, db: Session) ->
         raise HTTPException(status_code=400, detail='No usable tabs found (missing headers)')
 
     try:
+        _save_workbook_backup(db, workbook_name, content)
         crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
         db.commit()
     except Exception:
@@ -1118,10 +1151,14 @@ def rebuild_crm_from_workbook(
 ):
     workbook_name, tabs, total_rows, crm_rows = _collect_crm_rows_from_stored_workbook()
     if not tabs:
-        if not WORKBOOK_STORAGE_PATH.exists():
+        if WORKBOOK_STORAGE_PATH.exists():
+            content = WORKBOOK_STORAGE_PATH.read_bytes()
+            return _import_workbook_content(content, WORKBOOK_STORAGE_PATH.name, db)
+
+        backup_name, backup_content = _load_workbook_backup()
+        if backup_content is None:
             raise HTTPException(status_code=400, detail='No stored workbook data found')
-        content = WORKBOOK_STORAGE_PATH.read_bytes()
-        return _import_workbook_content(content, WORKBOOK_STORAGE_PATH.name, db)
+        return _import_workbook_content(backup_content, backup_name or 'stored_workbook.xlsx', db)
 
     try:
         crm_records_imported = _sync_crm_records_from_workbook_rows(db, crm_rows)
@@ -1212,6 +1249,8 @@ def get_workbook_storage_status(user: User = Depends(require_manager_or_admin), 
     has_workbook_data = False
     has_workbook_file = WORKBOOK_STORAGE_PATH.exists()
     workbook_file_name = WORKBOOK_STORAGE_PATH.name if has_workbook_file else None
+    backup_name, backup_content = _load_workbook_backup()
+    has_workbook_backup = backup_content is not None
     tabs_count = 0
     workbook_rows = 0
     crm_rows_mapped = 0
@@ -1233,6 +1272,8 @@ def get_workbook_storage_status(user: User = Depends(require_manager_or_admin), 
         has_workbook_data=has_workbook_data,
         has_workbook_file=has_workbook_file,
         workbook_file_name=workbook_file_name,
+        has_workbook_backup=has_workbook_backup,
+        workbook_backup_name=backup_name,
         tabs_count=tabs_count,
         workbook_rows=workbook_rows,
         crm_rows_mapped=crm_rows_mapped,

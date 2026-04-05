@@ -201,6 +201,8 @@ class WorkbookStorageStatus(BaseModel):
     has_workbook_data: bool
     has_workbook_file: bool
     workbook_file_name: Optional[str] = None
+    has_workbook_backup: bool
+    workbook_backup_name: Optional[str] = None
     tabs_count: int
     workbook_rows: int
     crm_rows_mapped: int
