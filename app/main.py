@@ -71,6 +71,34 @@ def _migrate_crm_columns():
 
 _migrate_crm_columns()
 
+
+def _normalize_existing_acres_nulls():
+    # Keep acreage fields numeric for downstream UI calculations.
+    with engine.connect() as conn:
+        conn.execute(text('UPDATE crm_records SET gross_acres = 0 WHERE gross_acres IS NULL'))
+        conn.execute(text('UPDATE crm_records SET net_acres = 0 WHERE net_acres IS NULL'))
+        conn.commit()
+
+
+_normalize_existing_acres_nulls()
+
+
+def _coerce_acres(value) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, str):
+        cleaned = value.replace(',', '').strip()
+        if cleaned == '':
+            return 0.0
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
 app = FastAPI(title='Local ERP/CRM MVP')
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
@@ -594,8 +622,8 @@ def _apply_crm_payload_to_record(record: CrmRecord, payload: dict, extra_data: O
     record.vol = payload.get('vol')
     record.pg = payload.get('pg')
     record.tract_description = payload.get('tract_description')
-    record.gross_acres = payload.get('gross_acres')
-    record.net_acres = payload.get('net_acres')
+    record.gross_acres = _coerce_acres(payload.get('gross_acres'))
+    record.net_acres = _coerce_acres(payload.get('net_acres'))
     record.royalty = payload.get('royalty')
     record.bonus_agreed = payload.get('bonus_agreed')
     record.term_months = payload.get('term_months')
@@ -1302,7 +1330,7 @@ def create_record(record: CrmRecordCreate, db: Session = Depends(get_db), curren
         lessor_owner=record.lessor_owner, lessee=record.lessee,
         lease_date=record.lease_date, vol=record.vol, pg=record.pg,
         tract_description=record.tract_description,
-        gross_acres=record.gross_acres, net_acres=record.net_acres,
+        gross_acres=_coerce_acres(record.gross_acres), net_acres=_coerce_acres(record.net_acres),
         royalty=record.royalty, bonus_agreed=record.bonus_agreed,
         term_months=record.term_months, extension_months=record.extension_months,
         mailed_date=record.mailed_date,
@@ -1324,7 +1352,7 @@ def create_record_link(record: CrmRecordCreate, db: Session = Depends(get_db)):
         lessor_owner=record.lessor_owner, lessee=record.lessee,
         lease_date=record.lease_date, vol=record.vol, pg=record.pg,
         tract_description=record.tract_description,
-        gross_acres=record.gross_acres, net_acres=record.net_acres,
+        gross_acres=_coerce_acres(record.gross_acres), net_acres=_coerce_acres(record.net_acres),
         royalty=record.royalty, bonus_agreed=record.bonus_agreed,
         term_months=record.term_months, extension_months=record.extension_months,
         mailed_date=record.mailed_date,
@@ -1343,6 +1371,11 @@ def update_record(record_id: int, update: CrmRecordUpdate, db: Session = Depends
 
     updates = update.dict(exclude_unset=True)
     extra_updates = updates.pop('extra_data', None)
+
+    if 'gross_acres' in updates:
+        updates['gross_acres'] = _coerce_acres(updates.get('gross_acres'))
+    if 'net_acres' in updates:
+        updates['net_acres'] = _coerce_acres(updates.get('net_acres'))
 
     for field, value in updates.items():
         setattr(record, field, value)
