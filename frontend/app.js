@@ -271,6 +271,26 @@ document.querySelectorAll('.nav-item[data-page]').forEach(item => {
   item.addEventListener('click', () => navigateTo(item.dataset.page));
 });
 
+function bindCrmHorizontalScrollAnywhere() {
+  const crmPage = document.getElementById('page-crm');
+  const tableWrap = crmPage ? crmPage.querySelector('.table-wrap') : null;
+  if (!crmPage || !tableWrap || crmPage.dataset.hScrollBound === '1') return;
+
+  crmPage.dataset.hScrollBound = '1';
+  crmPage.addEventListener('wheel', (e) => {
+    if (!crmPage.classList.contains('active')) return;
+    if (tableWrap.scrollWidth <= tableWrap.clientWidth) return;
+
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!delta) return;
+
+    tableWrap.scrollLeft += delta;
+    e.preventDefault();
+  }, { passive: false });
+}
+
+bindCrmHorizontalScrollAnywhere();
+
 // ── Modal helpers ──────────────────────────────────────────────
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
