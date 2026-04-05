@@ -37,6 +37,7 @@ from app.schemas import (
     WorkbookTabSummary,
     WorkbookImportResult,
     WorkbookTabRowsResult,
+    WorkbookStorageStatus,
 )
 
 models.Base.metadata.create_all(bind=engine)
@@ -1188,6 +1189,35 @@ def get_workbook_tab_rows(tab_key: str, limit: int = 200, user: User = Depends(r
         sheet_name=sheet_name,
         headers=headers,
         rows=rows,
+    )
+
+
+@app.get('/admin/workbook-storage-status', response_model=WorkbookStorageStatus)
+def get_workbook_storage_status(user: User = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    has_workbook_data = False
+    tabs_count = 0
+    workbook_rows = 0
+    crm_rows_mapped = 0
+
+    with engine.begin() as conn:
+        has_tabs_index = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='workbook_tabs_index'" )).fetchone() is not None
+        if has_tabs_index:
+            summary = conn.execute(text('SELECT COUNT(*), COALESCE(SUM(row_count), 0) FROM workbook_tabs_index')).fetchone()
+            tabs_count = int(summary[0] or 0)
+            workbook_rows = int(summary[1] or 0)
+            has_workbook_data = tabs_count > 0 and workbook_rows > 0
+
+        has_crm_index = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='workbook_crm_import_index'" )).fetchone() is not None
+        if has_crm_index:
+            crm_rows_mapped = int(conn.execute(text('SELECT COUNT(*) FROM workbook_crm_import_index')).scalar() or 0)
+
+    crm_records_count = db.query(CrmRecord).count()
+    return WorkbookStorageStatus(
+        has_workbook_data=has_workbook_data,
+        tabs_count=tabs_count,
+        workbook_rows=workbook_rows,
+        crm_rows_mapped=crm_rows_mapped,
+        crm_records_count=crm_records_count,
     )
 
 

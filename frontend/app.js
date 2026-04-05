@@ -122,6 +122,7 @@ function showApp() {
 
   if (isManagerPlus) {
     loadWorkbookTabs();
+    loadWorkbookStorageStatus();
   }
 
   navigateTo('dashboard');
@@ -262,6 +263,7 @@ function navigateTo(page) {
 
   if (page === 'dashboard') loadDashboard();
   if (page === 'crm') loadCRMRecords({});
+  if (page === 'workbook-import') loadWorkbookStorageStatus();
   if (page === 'users') loadUsers();
 }
 
@@ -519,6 +521,38 @@ async function loadWorkbookTabs() {
   }
 }
 
+async function loadWorkbookStorageStatus() {
+  const el = document.getElementById('workbookStorageStatus');
+  if (!el || !currentUser || !['admin', 'manager'].includes(currentUser.role)) return;
+
+  try {
+    const s = await apiJSON('/admin/workbook-storage-status', { headers: authHeaders() });
+    el.style.display = 'block';
+    if (s.has_workbook_data) {
+      el.textContent = `Stored workbook data: READY\nTabs: ${s.tabs_count}\nWorkbook rows: ${s.workbook_rows}\nCRM rows mapped: ${s.crm_rows_mapped}\nCurrent CRM records: ${s.crm_records_count}`;
+    } else {
+      el.textContent = `Stored workbook data: NOT FOUND\nTabs: ${s.tabs_count}\nWorkbook rows: ${s.workbook_rows}\nCRM rows mapped: ${s.crm_rows_mapped}\nCurrent CRM records: ${s.crm_records_count}`;
+    }
+  } catch (err) {
+    el.style.display = 'block';
+    el.textContent = `Could not load storage status: ${err.message}`;
+  }
+}
+
+function renderWorkbookImportSummary(data, mode = 'Import') {
+  const summaryEl = document.getElementById('workbookImportSummary');
+  if (!summaryEl || !data) return;
+
+  const tabs = Array.isArray(data.tabs) ? data.tabs : [];
+  const workbookRowsFromTabs = tabs.reduce((sum, t) => sum + (Number(t.row_count) || 0), 0);
+  const workbookRows = Number(data.total_rows_imported ?? workbookRowsFromTabs) || 0;
+  const crmRows = Number(data.crm_records_imported || 0);
+  const tabsImported = Number(data.tabs_imported || tabs.length || 0);
+
+  summaryEl.style.display = 'block';
+  summaryEl.textContent = `${mode} summary\nWorkbook rows found: ${workbookRows}\nCRM rows created: ${crmRows}\nTabs processed: ${tabsImported}`;
+}
+
 function renderWorkbookNav(tabs) {
   const container = document.getElementById('workbookTabsNav');
   if (!tabs || tabs.length === 0) {
@@ -591,10 +625,12 @@ document.getElementById('importWorkbookBtn').addEventListener('click', async () 
       body: form,
     });
     const data = await res.json();
+    renderWorkbookImportSummary(data, 'Import');
     outEl.textContent = JSON.stringify(data, null, 2);
     outEl.style.display = 'block';
     showToast(`Imported ${data.crm_records_imported || 0} CRM records from ${data.tabs_imported} tabs`, 'success');
     await loadWorkbookTabs();
+    await loadWorkbookStorageStatus();
     await loadDashboard();
     await loadCRMRecords({});
   } catch (err) {
@@ -611,10 +647,12 @@ document.getElementById('rebuildWorkbookBtn').addEventListener('click', async ()
       method: 'POST',
       headers: authHeaders(),
     });
+    renderWorkbookImportSummary(data, 'Rebuild');
     outEl.textContent = JSON.stringify(data, null, 2);
     outEl.style.display = 'block';
     showToast(`Rebuilt ${data.crm_records_imported || 0} CRM records from stored workbook data`, 'success');
     await loadWorkbookTabs();
+    await loadWorkbookStorageStatus();
     await loadDashboard();
     await loadCRMRecords(currentCrmSearchParams);
   } catch (err) {

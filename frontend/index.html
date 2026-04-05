@@ -443,12 +443,14 @@
         <div class="card-header"><h3>Upload Excel File</h3></div>
         <div class="card-body">
           <p class="text-muted mb-4">Upload <b>Master_TOMAHAWK_Report_20260402.xlsx</b>. Every worksheet will be ingested as its own dataset, workbook tab rows will be preserved, and mappable rows will be loaded into CRM records.</p>
+          <div id="workbookStorageStatus" class="output-pre mb-4" style="display:none;"></div>
           <div class="form-group">
             <label>Workbook (.xlsx)</label>
             <input id="workbookFile" type="file" accept=".xlsx" />
           </div>
           <button class="btn btn-primary" id="importWorkbookBtn">Import Workbook Data</button>
           <button class="btn btn-ghost" id="rebuildWorkbookBtn" style="margin-left:8px;">Rebuild CRM From Stored Workbook</button>
+          <div id="workbookImportSummary" class="output-pre mt-4" style="display:none;"></div>
           <div id="workbookImportOut" class="output-pre mt-4" style="display:none;"></div>
         </div>
       </div>

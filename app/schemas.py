@@ -196,3 +196,11 @@ class WorkbookTabRowsResult(BaseModel):
     headers: list[str]
     rows: list[dict]
 
+
+class WorkbookStorageStatus(BaseModel):
+    has_workbook_data: bool
+    tabs_count: int
+    workbook_rows: int
+    crm_rows_mapped: int
+    crm_records_count: int
+
