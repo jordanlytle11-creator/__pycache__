@@ -137,6 +137,98 @@
     .empty-row td { text-align: center; padding: 32px; color: var(--muted); font-style: italic; }
     td.crm-editable { cursor: pointer; }
     td.crm-editable:hover { background: #eff6ff; }
+    .crm-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .crm-controls-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .crm-controls label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .crm-row-height-input {
+      width: 170px;
+    }
+    #crmTable {
+      --crm-row-height: 44px;
+    }
+    #crmTable thead th {
+      position: relative;
+      user-select: none;
+      white-space: nowrap;
+    }
+    #crmTable thead .crm-header-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-right: 10px;
+      min-height: 26px;
+    }
+    #crmTable thead .crm-header-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #crmTable thead .crm-drag-handle {
+      cursor: grab;
+      color: #94a3b8;
+      font-size: 13px;
+      line-height: 1;
+    }
+    #crmTable thead .crm-resize-handle {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      opacity: 0;
+      transition: opacity .12s ease;
+    }
+    #crmTable thead th:hover .crm-resize-handle {
+      opacity: 1;
+    }
+    #crmTable thead tr.crm-filter-row th {
+      padding: 6px 8px;
+      text-transform: none;
+      letter-spacing: normal;
+      font-size: 11px;
+      background: #f8fafc;
+    }
+    .crm-filter-input, .crm-filter-select {
+      width: 100%;
+      padding: 6px 7px;
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      background: #fff;
+    }
+    .crm-filter-number {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+    #crmTable tbody td {
+      min-height: var(--crm-row-height);
+      height: var(--crm-row-height);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .crm-table-viewport {
       max-height: calc(100vh - 360px);
       overflow-y: auto;
@@ -381,8 +473,22 @@
         </div>
       </div>
       <div class="card">
+        <div class="card-body" style="padding-bottom:10px;">
+          <div class="crm-controls">
+            <div class="crm-controls-group">
+              <label for="crmRowHeight">Row Height</label>
+              <input id="crmRowHeight" class="crm-row-height-input" type="range" min="32" max="72" value="44" />
+              <span id="crmRowHeightValue" class="text-muted">44px</span>
+            </div>
+            <div class="crm-controls-group">
+              <button class="btn btn-ghost btn-sm" id="resetCrmLayoutBtn">Reset Layout</button>
+              <span class="text-muted">Drag headers to move columns. Drag edge to resize.</span>
+            </div>
+          </div>
+        </div>
         <div class="table-wrap crm-table-viewport" id="crmTableViewport">
           <table id="crmTable">
+            <colgroup id="crmColgroup"></colgroup>
             <thead id="crmThead"></thead>
             <tbody id="crmTbody"><tr class="empty-row"><td colspan="1">Run a search or click Show All</td></tr></tbody>
           </table>

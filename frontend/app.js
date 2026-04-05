@@ -10,6 +10,10 @@ let currentUser = null;  // { email, role }
 let workbookTabs = [];
 let currentCrmSearchParams = {};
 let currentCrmRecords = [];
+let currentCrmRawRecords = [];
+const DEFAULT_CRM_ROW_HEIGHT = 44;
+const crmLayoutStateByRole = {};
+const crmFilterStateByRole = {};
 
 // ── Toast ─────────────────────────────────────────────────────
 function showToast(msg, type = 'info', duration = 3500) {
@@ -249,6 +253,39 @@ const crmColumnEditors = {
   'CURATIVE IDENTIFIED': { extraKeys: ['curative_identified'] },
 };
 
+function getCrmRoleKey() {
+  return currentUser && currentUser.role === 'employee' ? 'employee' : 'manager_admin';
+}
+
+function getBaseCrmColumns() {
+  return currentUser && currentUser.role === 'employee' ? employeeCrmColumns : adminManagerCrmColumns;
+}
+
+function getCrmLayoutState() {
+  const roleKey = getCrmRoleKey();
+  const baseColumns = getBaseCrmColumns();
+  if (!crmLayoutStateByRole[roleKey]) {
+    crmLayoutStateByRole[roleKey] = {
+      order: baseColumns.map((column) => column.label),
+      widths: {},
+      rowHeight: DEFAULT_CRM_ROW_HEIGHT,
+    };
+  }
+
+  const state = crmLayoutStateByRole[roleKey];
+  const baseLabels = baseColumns.map((column) => column.label);
+  const existing = new Set(state.order);
+  baseLabels.forEach((label) => { if (!existing.has(label)) state.order.push(label); });
+  state.order = state.order.filter((label) => baseLabels.includes(label));
+  return state;
+}
+
+function getCrmFilterState() {
+  const roleKey = getCrmRoleKey();
+  if (!crmFilterStateByRole[roleKey]) crmFilterStateByRole[roleKey] = {};
+  return crmFilterStateByRole[roleKey];
+}
+
 function navigateTo(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item[data-page]').forEach(n => n.classList.remove('active'));
@@ -426,11 +463,229 @@ function esc(str) {
 }
 
 function getCrmColumns() {
-  return currentUser && currentUser.role === 'employee' ? employeeCrmColumns : adminManagerCrmColumns;
+  const baseColumns = getBaseCrmColumns();
+  const byLabel = new Map(baseColumns.map((column) => [column.label, column]));
+  const state = getCrmLayoutState();
+  return state.order.map((label) => byLabel.get(label)).filter(Boolean);
 }
 
 function getCrmColumnEditor(column) {
   return crmColumnEditors[column.label] || null;
+}
+
+function getColumnFilterType(column) {
+  if (column.type === 'status') return 'status';
+  if (column.type === 'date') return 'date';
+  const editor = getCrmColumnEditor(column);
+  if (editor && (editor.type === 'int' || editor.type === 'float')) return 'number';
+  return 'text';
+}
+
+function getColumnWidth(column) {
+  const state = getCrmLayoutState();
+  if (state.widths[column.label]) return state.widths[column.label];
+  return Math.max(140, Math.min(320, 80 + column.label.length * 8));
+}
+
+function getColumnFilter(column) {
+  const filters = getCrmFilterState();
+  if (!filters[column.label]) {
+    const t = getColumnFilterType(column);
+    filters[column.label] =
+      t === 'number' ? { min: '', max: '' }
+      : t === 'date' ? { from: '', to: '' }
+      : t === 'status' ? { value: '' }
+      : { text: '' };
+  }
+  return filters[column.label];
+}
+
+function extractColumnDisplayValue(record, column) {
+  const rawValue = getRecordValue(record, column.keys || []);
+  const value = rawValue ?? (column.fallback ? column.fallback(record) : null);
+  if (value === null || value === undefined || String(value).trim() === '') return '';
+  return String(value).trim();
+}
+
+function applyCrmColumnFilters(records, columns) {
+  return records.filter((record) => {
+    for (const column of columns) {
+      const type = getColumnFilterType(column);
+      const filter = getColumnFilter(column);
+      const value = extractColumnDisplayValue(record, column);
+
+      if (type === 'text') {
+        const q = (filter.text || '').trim().toLowerCase();
+        if (q && !value.toLowerCase().includes(q)) return false;
+      } else if (type === 'status') {
+        if (filter.value && value !== filter.value) return false;
+      } else if (type === 'number') {
+        if (!filter.min && !filter.max) continue;
+        const n = Number(value.replace(/[^0-9.\-]+/g, ''));
+        if (Number.isNaN(n)) return false;
+        if (filter.min !== '' && n < Number(filter.min)) return false;
+        if (filter.max !== '' && n > Number(filter.max)) return false;
+      } else if (type === 'date') {
+        if (!filter.from && !filter.to) continue;
+        const t = Date.parse(value);
+        if (Number.isNaN(t)) return false;
+        if (filter.from && t < Date.parse(filter.from)) return false;
+        if (filter.to && t > Date.parse(filter.to)) return false;
+      }
+    }
+    return true;
+  });
+}
+
+function getStatusOptionsForColumn(column) {
+  const options = new Set();
+  currentCrmRawRecords.forEach((record) => {
+    const value = extractColumnDisplayValue(record, column);
+    if (value) options.add(value);
+  });
+  return [...options].sort((a, b) => a.localeCompare(b));
+}
+
+function renderCrmFilterControl(column) {
+  const filterType = getColumnFilterType(column);
+  const filter = getColumnFilter(column);
+  const encodedLabel = encodeURIComponent(column.label);
+
+  if (filterType === 'status') {
+    const options = getStatusOptionsForColumn(column);
+    return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${options.map((opt) => `<option value="${esc(opt)}" ${filter.value === opt ? 'selected' : ''}>${esc(opt)}</option>`).join('')}</select>`;
+  }
+
+  if (filterType === 'number') {
+    return `<div class="crm-filter-number"><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="min" type="number" step="any" placeholder="min" value="${esc(filter.min || '')}" /><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="max" type="number" step="any" placeholder="max" value="${esc(filter.max || '')}" /></div>`;
+  }
+
+  if (filterType === 'date') {
+    return `<div class="crm-filter-number"><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="from" type="date" value="${esc(filter.from || '')}" /><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="to" type="date" value="${esc(filter.to || '')}" /></div>`;
+  }
+
+  return `<input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="text" type="text" placeholder="contains" value="${esc(filter.text || '')}" />`;
+}
+
+function bindCrmFilterInputs() {
+  document.querySelectorAll('.crm-filter-input, .crm-filter-select').forEach((el) => {
+    el.addEventListener('input', () => {
+      const label = decodeURIComponent(el.dataset.filterLabel || '');
+      const kind = el.dataset.filterKind;
+      const columns = getCrmColumns();
+      const column = columns.find((c) => c.label === label);
+      if (!column || !kind) return;
+      const filter = getColumnFilter(column);
+      filter[kind] = el.value;
+      renderCurrentCrmView();
+    });
+    el.addEventListener('change', () => {
+      const label = decodeURIComponent(el.dataset.filterLabel || '');
+      const kind = el.dataset.filterKind;
+      const columns = getCrmColumns();
+      const column = columns.find((c) => c.label === label);
+      if (!column || !kind) return;
+      const filter = getColumnFilter(column);
+      filter[kind] = el.value;
+      renderCurrentCrmView();
+    });
+  });
+}
+
+function bindCrmHeaderInteractions() {
+  const headers = document.querySelectorAll('#crmThead .crm-col-header');
+  const state = getCrmLayoutState();
+
+  headers.forEach((header) => {
+    header.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', header.dataset.columnLabel || '');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    header.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    header.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const fromLabel = e.dataTransfer.getData('text/plain');
+      const toLabel = header.dataset.columnLabel || '';
+      if (!fromLabel || !toLabel || fromLabel === toLabel) return;
+      const fromIdx = state.order.indexOf(fromLabel);
+      const toIdx = state.order.indexOf(toLabel);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const [moved] = state.order.splice(fromIdx, 1);
+      state.order.splice(toIdx, 0, moved);
+      renderCurrentCrmView();
+    });
+  });
+
+  document.querySelectorAll('#crmThead .crm-resize-handle').forEach((handle) => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const label = handle.dataset.columnLabel;
+      if (!label) return;
+      const startX = e.clientX;
+      const startW = state.widths[label] || 180;
+
+      const onMove = (moveEvt) => {
+        const next = Math.max(100, Math.min(700, startW + (moveEvt.clientX - startX)));
+        state.widths[label] = next;
+        const col = [...document.querySelectorAll('#crmColgroup col')].find((c) => c.dataset.columnLabel === label);
+        if (col) col.style.width = `${next}px`;
+        syncCrmScrollBar();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
+function applyCrmRowHeight() {
+  const table = document.getElementById('crmTable');
+  const slider = document.getElementById('crmRowHeight');
+  const valEl = document.getElementById('crmRowHeightValue');
+  if (!table || !slider || !valEl) return;
+  const state = getCrmLayoutState();
+  const h = Number(state.rowHeight || DEFAULT_CRM_ROW_HEIGHT);
+  table.style.setProperty('--crm-row-height', `${h}px`);
+  slider.value = String(h);
+  valEl.textContent = `${h}px`;
+}
+
+function resetCrmLayout() {
+  const roleKey = getCrmRoleKey();
+  const baseColumns = getBaseCrmColumns();
+  crmLayoutStateByRole[roleKey] = {
+    order: baseColumns.map((column) => column.label),
+    widths: {},
+    rowHeight: DEFAULT_CRM_ROW_HEIGHT,
+  };
+  crmFilterStateByRole[roleKey] = {};
+  applyCrmRowHeight();
+  renderCurrentCrmView();
+}
+
+function bindCrmControls() {
+  const slider = document.getElementById('crmRowHeight');
+  const resetBtn = document.getElementById('resetCrmLayoutBtn');
+  if (slider && slider.dataset.bound !== '1') {
+    slider.dataset.bound = '1';
+    slider.addEventListener('input', () => {
+      const state = getCrmLayoutState();
+      state.rowHeight = Number(slider.value);
+      applyCrmRowHeight();
+    });
+  }
+  if (resetBtn && resetBtn.dataset.bound !== '1') {
+    resetBtn.dataset.bound = '1';
+    resetBtn.addEventListener('click', resetCrmLayout);
+  }
 }
 
 function getRecordValue(record, keys = []) {
@@ -530,14 +785,37 @@ function bindCrmEditableCells() {
 
 function renderCrmTable(records) {
   const columns = getCrmColumns();
+  const colgroup = document.getElementById('crmColgroup');
   const thead = document.getElementById('crmThead');
   const tbody = document.getElementById('crmTbody');
   currentCrmRecords = records;
 
-  thead.innerHTML = `<tr>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}</tr>`;
+  colgroup.innerHTML = columns.map((column) => `<col data-column-label="${esc(column.label)}" style="width:${getColumnWidth(column)}px;" />`).join('');
+
+  thead.innerHTML = `
+    <tr>
+      ${columns.map((column) => `
+        <th class="crm-col-header" draggable="true" data-column-label="${esc(column.label)}">
+          <div class="crm-header-cell">
+            <span class="crm-header-label">${esc(column.label)}</span>
+            <span class="crm-drag-handle" title="Drag to move column">::</span>
+          </div>
+          <span class="crm-resize-handle" data-column-label="${esc(column.label)}" title="Drag to resize"></span>
+        </th>
+      `).join('')}
+    </tr>
+    <tr class="crm-filter-row">
+      ${columns.map((column) => `<th>${renderCrmFilterControl(column)}</th>`).join('')}
+    </tr>
+  `;
 
   if (records.length === 0) {
     tbody.innerHTML = `<tr class="empty-row"><td colspan="${columns.length}">No records found</td></tr>`;
+    bindCrmHeaderInteractions();
+    bindCrmFilterInputs();
+    applyCrmRowHeight();
+    bindCrmControls();
+    syncCrmScrollBar();
     return;
   }
 
@@ -547,7 +825,17 @@ function renderCrmTable(records) {
     </tr>`).join('');
 
   bindCrmEditableCells();
+  bindCrmHeaderInteractions();
+  bindCrmFilterInputs();
+  applyCrmRowHeight();
+  bindCrmControls();
   syncCrmScrollBar();
+}
+
+function renderCurrentCrmView() {
+  const columns = getCrmColumns();
+  const filtered = applyCrmColumnFilters(currentCrmRawRecords, columns);
+  renderCrmTable(filtered);
 }
 
 // ── Workbook Ingestion + Cards ───────────────────────────────
@@ -723,7 +1011,8 @@ async function loadCRMRecords(params) {
   try {
     const path = qs ? `/crm/search?${qs}&limit=300000` : '/crm?limit=300000';
     const records = await apiJSON(path, { headers: authHeaders() });
-    renderCrmTable(records);
+    currentCrmRawRecords = records;
+    renderCurrentCrmView();
   } catch (err) {
     showToast('Search failed: ' + err.message, 'error');
   }
