@@ -418,23 +418,8 @@
     <div id="page-dashboard" class="page active">
       <div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value" id="kpiTotal">—</div><div class="kpi-sub">All CRM entries</div></div>
-        <div class="kpi-card"><div class="kpi-label">No Contact</div><div class="kpi-value" id="kpiNew" style="color:var(--accent)">—</div><div class="kpi-sub">Includes Unlocatable</div></div>
-        <div class="kpi-card"><div class="kpi-label">In Progress</div><div class="kpi-value" id="kpiProg" style="color:var(--warn)">—</div><div class="kpi-sub">Working and active statuses</div></div>
-        <div class="kpi-card"><div class="kpi-label">Closed</div><div class="kpi-value" id="kpiClosed" style="color:var(--success)">—</div><div class="kpi-sub">Signed or Hard No</div></div>
       </div>
-      <div id="dashStatusBreakdown" class="status-breakdown"></div>
-      <div class="card">
-        <div class="card-header">
-          <h3>Recent CRM Records</h3>
-          <button class="btn btn-primary btn-sm" id="dashAddBtn">+ Add Record</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>ID</th><th>Company</th><th>Contact</th><th>TRS Code</th><th>Status</th><th>Created</th></tr></thead>
-            <tbody id="dashTbody"><tr class="empty-row"><td colspan="6">Loading...</td></tr></tbody>
-          </table>
-        </div>
-      </div>
+      <div id="dashStatusBreakdown" class="kpi-grid"></div>
     </div>
 
     <!-- CRM Records -->

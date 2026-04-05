@@ -397,36 +397,10 @@ document.getElementById('submitForgotCredsBtn').addEventListener('click', async 
 async function loadDashboard() {
   try {
     const records = await apiJSON('/crm?limit=300000', { headers: authHeaders() });
-    const newStatuses = new Set(['No Contact', 'No Contact / Unlocatable']);
-    const progressStatuses = new Set(['Working', 'Verbally Committed', 'Agreed to Terms', 'Surface Only', 'Outreach Pending']);
-    const closedStatuses = new Set(['Signed / In Hand', 'Hard No']);
-
     const total = records.length;
-    const newCount = records.filter(r => newStatuses.has(r.status)).length;
-    const progCount = records.filter(r => progressStatuses.has(r.status)).length;
-    const closedCount = records.filter(r => closedStatuses.has(r.status)).length;
 
     document.getElementById('kpiTotal').textContent = total;
-    document.getElementById('kpiNew').textContent = newCount;
-    document.getElementById('kpiProg').textContent = progCount;
-    document.getElementById('kpiClosed').textContent = closedCount;
     renderDashboardStatusBreakdown(records);
-
-    const tbody = document.getElementById('dashTbody');
-    const recent = records.slice(-10).reverse();
-    if (recent.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No records yet</td></tr>';
-    } else {
-      tbody.innerHTML = recent.map(r => `
-        <tr>
-          <td>${r.id}</td>
-          <td>${esc(r.company || '—')}</td>
-          <td>${esc(r.contact || '—')}</td>
-          <td>${trsCode(r)}</td>
-          <td>${statusBadge(r.status)}</td>
-          <td>${fmtDate(r.created_at)}</td>
-        </tr>`).join('');
-    }
   } catch (err) {
     showToast('Failed to load dashboard: ' + err.message, 'error');
   }
@@ -437,20 +411,34 @@ function renderDashboardStatusBreakdown(records) {
   if (!container) return;
 
   if (!records.length) {
-    container.innerHTML = '<span class="text-muted">No status data yet</span>';
+    container.innerHTML = '<div class="text-muted" style="padding: 20px;">No status data yet</div>';
     return;
   }
 
-  const counts = new Map();
+  const statusData = new Map();
   records.forEach((r) => {
-    const key = (r.status || 'No Contact').trim() || 'No Contact';
-    counts.set(key, (counts.get(key) || 0) + 1);
+    const status = (r.status || 'No Contact').trim() || 'No Contact';
+    const netAcres = parseFloat(r.net_acres) || 0;
+    
+    if (!statusData.has(status)) {
+      statusData.set(status, { count: 0, totalAcres: 0 });
+    }
+    const data = statusData.get(status);
+    data.count += 1;
+    data.totalAcres += netAcres;
   });
 
-  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const sorted = [...statusData.entries()]
+    .sort((a, b) => b[1].totalAcres - a[1].totalAcres || a[0].localeCompare(b[0]));
+  
   container.innerHTML = sorted
-    .map(([status, count]) => `<span class="status-pill">${statusBadge(status)}<span class="status-count">${count}</span></span>`)
-    .join('');
+    .map(([status, data]) => `
+      <div class="kpi-card">
+        <div class="kpi-label">${esc(status)}</div>
+        <div class="kpi-value">${data.totalAcres.toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
+        <div class="kpi-sub">${data.count} record${data.count !== 1 ? 's' : ''}</div>
+      </div>
+    `).join('');
 }
 
 function trsCode(r) {
