@@ -309,6 +309,9 @@
     .crm-batch-bar { display:flex; align-items:center; gap:10px; padding:8px 0; flex-wrap:wrap; margin-bottom:12px; }
     .crm-check-th, .crm-check-cell { width:40px; text-align:center; padding:0 8px !important; }
     .crm-row-selected > td { background:#eff6ff !important; }
+    .batch-individual-list { max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: grid; gap: 8px; }
+    .batch-individual-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
+    .batch-individual-row label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
   </style>
 </head>
 <body>
@@ -484,6 +487,7 @@
             </div>
             <div class="crm-controls-group">
               <button class="btn btn-ghost btn-sm" id="resetCrmLayoutBtn">Reset Layout</button>
+              <button class="btn btn-ghost btn-sm" id="clearCrmFiltersBtn">Clear Filters</button>
               <span class="text-muted">Drag headers to move columns. Drag edge to resize.</span>
             </div>
           </div>
@@ -807,7 +811,7 @@
 <div class="modal-overlay" id="findReplaceModal">
   <div class="modal" style="width:520px;max-width:98vw;">
     <div class="modal-header">
-      <h3>Batch Edit — Find &amp; Replace</h3>
+      <h3>Batch Edit - Selected Column</h3>
       <button class="close-btn" data-close="findReplaceModal">&#10005;</button>
     </div>
     <div class="modal-body">
@@ -816,61 +820,25 @@
         <select id="batchEditColumn"></select>
       </div>
       <div class="form-group">
-        <label>Find (leave blank to update all selected)</label>
-        <input id="batchFindValue" placeholder="Match current cell value (optional)" autocomplete="off" />
+        <label>Edit Mode</label>
+        <select id="batchEditMode">
+          <option value="replace">Replace All Matching</option>
+          <option value="individual">Edit Individually</option>
+        </select>
       </div>
-      <div class="form-group">
-        <label>Replace With</label>
-        <input id="batchReplaceValue" placeholder="New value" autocomplete="off" />
+      <div id="batchReplaceSection">
+        <div class="form-group">
+          <label>Find (leave blank to update all selected)</label>
+          <input id="batchFindValue" placeholder="Match current cell value (optional)" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Replace With</label>
+          <input id="batchReplaceValue" placeholder="New value" autocomplete="off" />
+        </div>
       </div>
-      <div id="batchEditStatus" class="text-muted"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" data-close="findReplaceModal">Cancel</button>
-      <button class="btn btn-primary" id="executeBatchEditBtn">Apply to Selected</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL: Add Project -->
-<div class="modal-overlay" id="addProjectModal">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Add New Project</h3>
-      <button class="close-btn" data-close="addProjectModal">&#10005;</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>Project Name</label>
-        <input id="newProjectName" placeholder="e.g. Viper, Phoenix" autocomplete="off" />
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" data-close="addProjectModal">Cancel</button>
-      <button class="btn btn-primary" id="saveNewProjectBtn">Add Project</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL: Batch Find & Replace -->
-<div class="modal-overlay" id="findReplaceModal">
-  <div class="modal" style="width:520px;max-width:98vw;">
-    <div class="modal-header">
-      <h3>Batch Edit &#8212; Find &amp; Replace</h3>
-      <button class="close-btn" data-close="findReplaceModal">&#10005;</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>Column to Edit</label>
-        <select id="batchEditColumn"></select>
-      </div>
-      <div class="form-group">
-        <label>Find (leave blank to update all selected)</label>
-        <input id="batchFindValue" placeholder="Match current cell value (optional)" autocomplete="off" />
-      </div>
-      <div class="form-group">
-        <label>Replace With</label>
-        <input id="batchReplaceValue" placeholder="New value" autocomplete="off" />
+      <div id="batchIndividualSection" style="display:none;">
+        <div class="text-muted mb-4">Set a value for each selected record in this column.</div>
+        <div id="batchIndividualRows" class="batch-individual-list"></div>
       </div>
       <div id="batchEditStatus" class="text-muted"></div>
     </div>

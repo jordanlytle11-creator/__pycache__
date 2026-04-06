@@ -146,6 +146,39 @@ function updateCrmBatchBar() {
   }
 }
 
+function getSelectedCrmRecords() {
+  return currentCrmRawRecords.filter((record) => selectedCrmRecordIds.has(record.id));
+}
+
+function renderBatchIndividualRows(column) {
+  const container = document.getElementById('batchIndividualRows');
+  if (!container) return;
+  const selected = getSelectedCrmRecords();
+  if (selected.length === 0) {
+    container.innerHTML = '<div class="text-muted">No selected records.</div>';
+    return;
+  }
+
+  container.innerHTML = selected.map((record) => {
+    const label = record.company || record.lessor_owner || record.contact || `Record ${record.id}`;
+    const currentValue = getCrmEditPromptValue(record, column);
+    return `
+      <div class="batch-individual-row">
+        <label for="batchValue_${record.id}">${esc(label)}</label>
+        <input id="batchValue_${record.id}" class="batch-individual-input" data-record-id="${record.id}" value="${esc(currentValue)}" autocomplete="off" />
+      </div>
+    `;
+  }).join('');
+}
+
+function syncBatchEditModeUI() {
+  const mode = document.getElementById('batchEditMode')?.value || 'replace';
+  const replaceSection = document.getElementById('batchReplaceSection');
+  const individualSection = document.getElementById('batchIndividualSection');
+  if (replaceSection) replaceSection.style.display = mode === 'replace' ? '' : 'none';
+  if (individualSection) individualSection.style.display = mode === 'individual' ? '' : 'none';
+}
+
 function fmtDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -817,6 +850,7 @@ function resetCrmLayout() {
 function bindCrmControls() {
   const slider = document.getElementById('crmRowHeight');
   const resetBtn = document.getElementById('resetCrmLayoutBtn');
+  const clearFiltersBtn = document.getElementById('clearCrmFiltersBtn');
   if (slider && slider.dataset.bound !== '1') {
     slider.dataset.bound = '1';
     slider.addEventListener('input', () => {
@@ -828,6 +862,14 @@ function bindCrmControls() {
   if (resetBtn && resetBtn.dataset.bound !== '1') {
     resetBtn.dataset.bound = '1';
     resetBtn.addEventListener('click', resetCrmLayout);
+  }
+  if (clearFiltersBtn && clearFiltersBtn.dataset.bound !== '1') {
+    clearFiltersBtn.dataset.bound = '1';
+    clearFiltersBtn.addEventListener('click', () => {
+      const roleKey = getCrmRoleKey();
+      crmFilterStateByRole[roleKey] = {};
+      renderCurrentCrmView();
+    });
   }
 }
 
@@ -1410,12 +1452,29 @@ document.getElementById('saveNewProjectBtn').addEventListener('click', () => {
 document.getElementById('batchEditBtn').addEventListener('click', () => {
   if (selectedCrmRecordIds.size === 0) { showToast('Select records first', 'error'); return; }
   const colSelect = document.getElementById('batchEditColumn');
+  const modeSelect = document.getElementById('batchEditMode');
   const editableCols = getCrmColumns().filter((col) => getCrmColumnEditor(col));
   colSelect.innerHTML = editableCols.map((col) => `<option value="${esc(col.label)}">${esc(col.label)}</option>`).join('');
+  modeSelect.value = 'replace';
   document.getElementById('batchFindValue').value = '';
   document.getElementById('batchReplaceValue').value = '';
   document.getElementById('batchEditStatus').textContent = `Will apply to up to ${selectedCrmRecordIds.size} selected record(s).`;
+  syncBatchEditModeUI();
+  if (editableCols.length > 0) renderBatchIndividualRows(editableCols[0]);
   openModal('findReplaceModal');
+});
+
+document.getElementById('batchEditMode').addEventListener('change', () => {
+  const colLabel = document.getElementById('batchEditColumn').value;
+  const column = getCrmColumns().find((c) => c.label === colLabel);
+  syncBatchEditModeUI();
+  if (column) renderBatchIndividualRows(column);
+});
+
+document.getElementById('batchEditColumn').addEventListener('change', () => {
+  const colLabel = document.getElementById('batchEditColumn').value;
+  const column = getCrmColumns().find((c) => c.label === colLabel);
+  if (column) renderBatchIndividualRows(column);
 });
 
 document.getElementById('clearSelectionBtn').addEventListener('click', () => {
@@ -1426,35 +1485,64 @@ document.getElementById('clearSelectionBtn').addEventListener('click', () => {
 
 document.getElementById('executeBatchEditBtn').addEventListener('click', async () => {
   const colLabel = document.getElementById('batchEditColumn').value;
+  const mode = document.getElementById('batchEditMode').value;
   const findValue = document.getElementById('batchFindValue').value;
   const replaceValue = document.getElementById('batchReplaceValue').value;
   const statusEl = document.getElementById('batchEditStatus');
   if (!colLabel) { showToast('Select a column', 'error'); return; }
   const column = getCrmColumns().find((c) => c.label === colLabel);
   if (!column) { showToast('Column not found', 'error'); return; }
-  let payload;
-  try {
-    payload = buildCrmUpdatePayload(column, replaceValue);
-  } catch (err) {
-    showToast('Invalid value: ' + err.message, 'error');
+
+  const targetRecords = getSelectedCrmRecords();
+  if (targetRecords.length === 0) {
+    statusEl.textContent = 'No selected records available.';
     return;
   }
-  if (!payload) { showToast('No payload generated', 'error'); return; }
-  const targetRecords = currentCrmRawRecords.filter((r) => selectedCrmRecordIds.has(r.id));
-  const findTrimmed = findValue.trim().toLowerCase();
-  const candidates = findTrimmed
-    ? targetRecords.filter((r) => getCrmEditPromptValue(r, column).toLowerCase().includes(findTrimmed))
-    : targetRecords;
-  if (candidates.length === 0) { statusEl.textContent = 'No matching records found.'; return; }
-  statusEl.textContent = `Updating ${candidates.length} record(s)...`;
+
   let successes = 0;
   let failures = 0;
-  for (const record of candidates) {
+
+  if (mode === 'replace') {
+    let payload;
     try {
-      await apiJSON(`/crm/${record.id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
-      successes++;
-    } catch { failures++; }
+      payload = buildCrmUpdatePayload(column, replaceValue);
+    } catch (err) {
+      showToast('Invalid value: ' + err.message, 'error');
+      return;
+    }
+    if (!payload) { showToast('No payload generated', 'error'); return; }
+
+    const findTrimmed = findValue.trim().toLowerCase();
+    const candidates = findTrimmed
+      ? targetRecords.filter((r) => getCrmEditPromptValue(r, column).toLowerCase().includes(findTrimmed))
+      : targetRecords;
+    if (candidates.length === 0) { statusEl.textContent = 'No matching records found.'; return; }
+    statusEl.textContent = `Updating ${candidates.length} record(s)...`;
+
+    for (const record of candidates) {
+      try {
+        await apiJSON(`/crm/${record.id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
+        successes++;
+      } catch {
+        failures++;
+      }
+    }
+  } else {
+    statusEl.textContent = `Updating ${targetRecords.length} record(s) with individual values...`;
+    for (const record of targetRecords) {
+      const inputEl = document.getElementById(`batchValue_${record.id}`);
+      if (!inputEl) continue;
+      try {
+        const payload = buildCrmUpdatePayload(column, inputEl.value);
+        if (!payload) continue;
+        await apiJSON(`/crm/${record.id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
+        successes++;
+      } catch {
+        failures++;
+      }
+    }
   }
+
   closeModal('findReplaceModal');
   showToast(failures > 0 ? `Updated ${successes}, failed ${failures}` : `Updated ${successes} record(s)`, failures > 0 ? 'error' : 'success');
   selectedCrmRecordIds.clear();
