@@ -80,7 +80,8 @@ function statusBadge(status) {
     'No Contact / Unlocatable': 'badge-status-no-contact',
     'Surface Only': 'badge-status-surface-only',
     'Working': 'badge-status-working',
-    'Verbally Committed': 'badge-status-verbally-committed',
+    'Verbally Committed': 'badge-closed',
+    'Hard No': 'badge-status-hard-no',
     'Agreed to Terms': 'badge-status-agreed',
     'Signed / In Hand': 'badge-status-signed',
   };
