@@ -208,3 +208,41 @@ class WorkbookStorageStatus(BaseModel):
     crm_rows_mapped: int
     crm_records_count: int
 
+
+class DashboardStatusSummary(BaseModel):
+    status: str
+    record_count: int
+    net_acres_total: float
+    variable_count: int
+
+
+class DashboardProjectSummary(BaseModel):
+    project_key: str
+    project_name: str
+    total_records: int
+    total_net_acres: float
+    variable_count: int
+    statuses: list[DashboardStatusSummary]
+
+
+class DashboardSummaryResponse(BaseModel):
+    role: str
+    scope_record_count: int
+    project_summaries: list[DashboardProjectSummary]
+    master_summary: DashboardProjectSummary
+
+
+class CrmProjectAssignRequest(BaseModel):
+    project_key: Optional[str] = None
+
+    @validator('project_key')
+    def normalize_project_key(cls, v):
+        if v is None:
+            return None
+        value = v.strip().lower()
+        if value in {'', 'none', 'unassigned'}:
+            return None
+        if value not in {'tomahawk', 'romulus'}:
+            raise ValueError('project_key must be tomahawk, romulus, or empty')
+        return value
+

@@ -61,6 +61,42 @@ function roleBadge(role) {
   return `<span class="badge ${cls}">${role}</span>`;
 }
 
+function projectBadge(projectKey) {
+  const value = (projectKey || '').toLowerCase();
+  if (value === 'tomahawk') return '<span class="badge badge-progress">Tomahawk</span>';
+  if (value === 'romulus') return '<span class="badge badge-admin">Romulus</span>';
+  return '<span class="badge badge-employee">Unassigned</span>';
+}
+
+function detectProjectFromRecord(record) {
+  const extra = record && record.extra_data ? record.extra_data : {};
+  const explicit = String(extra.project_normalized || '').trim().toLowerCase();
+  if (explicit === 'tomahawk' || explicit === 'romulus') return explicit;
+
+  const candidates = [
+    extra.project,
+    extra.project_name,
+    extra.work_project,
+    extra.program_name,
+    extra.workbook_name,
+    extra.workbook_sheet,
+    extra.workbook_tab_key,
+    extra.ami_aoi,
+    extra.oklahoma_county_tomahawk_project,
+    record.company,
+    record.contact,
+    record.lease_agent,
+    record.lessor_owner,
+    record.lessee,
+  ]
+    .filter((v) => v !== null && v !== undefined)
+    .map((v) => String(v).toLowerCase());
+
+  if (candidates.some((v) => v.includes('romulus'))) return 'romulus';
+  if (candidates.some((v) => v.includes('tomahawk'))) return 'tomahawk';
+  return '';
+}
+
 function fmtDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -146,6 +182,7 @@ const pageTitles = {
 };
 
 const adminManagerCrmColumns = [
+  { label: 'PROJECT', keys: ['project_normalized', 'project', 'project_name'], type: 'project', fallback: (record) => detectProjectFromRecord(record) || 'unassigned' },
   { label: 'AMI/AOI', keys: ['ami_aoi', 'oklahoma_county_tomahawk_project', 'column_1'] },
   { label: 'STATE CODE', keys: ['state_code', 'column_2'] },
   { label: 'COUNTY CODE', keys: ['county_code', 'column_3'] },
@@ -188,6 +225,7 @@ const adminManagerCrmColumns = [
 ];
 
 const employeeCrmColumns = [
+  { label: 'PROJECT', keys: ['project_normalized', 'project', 'project_name'], type: 'project', fallback: (record) => detectProjectFromRecord(record) || 'unassigned' },
   { label: 'LEASE NAME', keys: ['lease_name', 'company', 'column_10'] },
   { label: 'STATE', keys: ['state', 'column_11'] },
   { label: 'COUNTY', keys: ['county', 'column_12'] },
@@ -396,67 +434,104 @@ document.getElementById('submitForgotCredsBtn').addEventListener('click', async 
 // ── Dashboard ─────────────────────────────────────────────────
 async function loadDashboard() {
   try {
-    const records = await apiJSON('/crm?limit=300000', { headers: authHeaders() });
-    
-    // Ensure records is an array
-    if (!Array.isArray(records)) {
-      showToast('Dashboard data is invalid', 'error');
-      return;
-    }
-
-    const total = records.length;
-    const totalEl = document.getElementById('kpiTotal');
-    if (totalEl) totalEl.textContent = total;
-    renderDashboardStatusBreakdown(records);
+    const summary = await apiJSON('/dashboard/summary', { headers: authHeaders() });
+    renderDashboard(summary);
   } catch (err) {
     showToast('Failed to load dashboard: ' + err.message, 'error');
   }
 }
 
-function renderDashboardStatusBreakdown(records) {
-  const container = document.getElementById('dashStatusBreakdown');
-  if (!container) return;
+function formatMetric(value, digits = 2) {
+  const num = Number(value || 0);
+  return num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: digits });
+}
 
-  // Ensure records is an array
-  if (!Array.isArray(records) || records.length === 0) {
-    container.innerHTML = '<div class="text-muted" style="padding: 20px;">No status data yet</div>';
-    return;
+function renderStatusRows(statuses, roleTitle) {
+  if (!Array.isArray(statuses) || statuses.length === 0) {
+    return `<tr class="empty-row"><td colspan="4">No ${esc(roleTitle)} status data yet</td></tr>`;
   }
 
-  const statusData = new Map();
-  records.forEach((r) => {
-    if (!r) return; // Skip null/undefined records
-    const status = (r.status || 'No Contact').trim() || 'No Contact';
-    const acresRaw = r.net_acres ?? r.column_24 ?? 0;
-    const acresText = String(acresRaw).replace(/,/g, '').trim();
-    const acresParsed = Number(acresText);
-    const netAcres = Number.isFinite(acresParsed) ? acresParsed : 0;
-    
-    if (!statusData.has(status)) {
-      statusData.set(status, { count: 0, totalAcres: 0 });
-    }
-    const data = statusData.get(status);
-    data.count += 1;
-    data.totalAcres += netAcres;
-  });
+  return statuses.slice(0, 10).map((row) => `
+    <tr>
+      <td>${statusBadge(row.status || 'No Contact')}</td>
+      <td>${formatMetric(row.record_count, 0)}</td>
+      <td>${formatMetric(row.net_acres_total, 2)}</td>
+      <td>${formatMetric(row.variable_count, 0)}</td>
+    </tr>
+  `).join('');
+}
 
-  const sorted = [...statusData.entries()]
-    .sort((a, b) => b[1].totalAcres - a[1].totalAcres || a[0].localeCompare(b[0]));
-  const topEight = sorted.slice(0, 8);
-  
-  if (topEight.length === 0) {
-    container.innerHTML = '<div class="text-muted" style="padding: 20px;">No status data yet</div>';
-    return;
+function renderProjectSummaryCard(summary, scopeLabel) {
+  if (!summary) {
+    return `<div class="kpi-card"><div class="kpi-label">${esc(scopeLabel)}</div><div class="kpi-sub">No data</div></div>`;
   }
 
-  container.innerHTML = topEight
-    .map(([status, data]) => `
-      <div class="kpi-card">
-        <div class="kpi-label">${esc(status)}</div>
-        <div class="kpi-value">${data.totalAcres.toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
-        <div class="kpi-sub">Net Acres · ${data.count} record${data.count !== 1 ? 's' : ''}</div>
+  return `
+    <div class="dashboard-project-card">
+      <div class="card-header">
+        <h3>${esc(summary.project_name)} Dashboard</h3>
+        <span class="badge badge-manager">${esc(scopeLabel)}</span>
       </div>
-    `).join('');
+      <div class="card-body">
+        <div class="kpi-grid dashboard-mini-kpis">
+          <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value">${formatMetric(summary.total_records, 0)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Total Net Acres</div><div class="kpi-value">${formatMetric(summary.total_net_acres, 2)}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Variable Count</div><div class="kpi-value">${formatMetric(summary.variable_count, 0)}</div></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Status</th><th>Records</th><th>Net Acres</th><th>Variables</th></tr></thead>
+            <tbody>${renderStatusRows(summary.statuses, summary.project_name)}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDashboard(summary) {
+  const totalEl = document.getElementById('kpiTotal');
+  const netAcreEl = document.getElementById('kpiNetAcres');
+  const variableEl = document.getElementById('kpiVariables');
+  const scopeEl = document.getElementById('kpiScope');
+  const gridEl = document.getElementById('dashProjectPanels');
+
+  if (!summary || !summary.master_summary) {
+    if (gridEl) gridEl.innerHTML = '<div class="card"><div class="card-body text-muted">No dashboard data available.</div></div>';
+    if (totalEl) totalEl.textContent = '0';
+    if (netAcreEl) netAcreEl.textContent = '0';
+    if (variableEl) variableEl.textContent = '0';
+    if (scopeEl) scopeEl.textContent = 'No records in scope';
+    return;
+  }
+
+  const role = summary.role || (currentUser ? currentUser.role : 'employee');
+  const scopeLabel = role === 'admin' ? 'Admin' : role === 'manager' ? 'Manager' : 'Employee';
+  const master = summary.master_summary;
+
+  if (totalEl) totalEl.textContent = formatMetric(master.total_records, 0);
+  if (netAcreEl) netAcreEl.textContent = formatMetric(master.total_net_acres, 2);
+  if (variableEl) variableEl.textContent = formatMetric(master.variable_count, 0);
+  if (scopeEl) scopeEl.textContent = `${scopeLabel} scope · ${formatMetric(summary.scope_record_count, 0)} record${Number(summary.scope_record_count) === 1 ? '' : 's'}`;
+
+  if (!gridEl) return;
+
+  const byKey = new Map((summary.project_summaries || []).map((item) => [item.project_key, item]));
+  const panels = [];
+
+  if (role === 'admin') {
+    panels.push(renderProjectSummaryCard(byKey.get('tomahawk'), 'Admin Scope'));
+    panels.push(renderProjectSummaryCard(byKey.get('romulus'), 'Admin Scope'));
+    panels.push(renderProjectSummaryCard(master, 'Master Combined'));
+  } else if (role === 'manager') {
+    panels.push(renderProjectSummaryCard(byKey.get('tomahawk'), 'Manager Scope'));
+    panels.push(renderProjectSummaryCard(byKey.get('romulus'), 'Manager Scope'));
+    panels.push(renderProjectSummaryCard(master, 'Combined View'));
+  } else {
+    panels.push(renderProjectSummaryCard(master, 'Assigned Portfolio'));
+  }
+
+  gridEl.innerHTML = panels.join('');
 }
 
 function trsCode(r) {
@@ -481,6 +556,7 @@ function getCrmColumnEditor(column) {
 
 function getColumnFilterType(column) {
   if (column.type === 'status') return 'status';
+  if (column.type === 'project') return 'project';
   if (column.type === 'date') return 'date';
   const editor = getCrmColumnEditor(column);
   if (editor && (editor.type === 'int' || editor.type === 'float')) return 'number';
@@ -500,6 +576,7 @@ function getColumnFilter(column) {
     filters[column.label] =
       t === 'number' ? { min: '', max: '' }
       : t === 'date' ? { from: '', to: '' }
+      : t === 'project' ? { value: '' }
       : t === 'status' ? { value: '' }
       : { text: '' };
   }
@@ -525,6 +602,8 @@ function applyCrmColumnFilters(records, columns) {
         if (q && !value.toLowerCase().includes(q)) return false;
       } else if (type === 'status') {
         if (filter.value && value !== filter.value) return false;
+      } else if (type === 'project') {
+        if (filter.value && value.toLowerCase() !== filter.value.toLowerCase()) return false;
       } else if (type === 'number') {
         if (!filter.min && !filter.max) continue;
         const n = Number(value.replace(/[^0-9.\-]+/g, ''));
@@ -560,6 +639,11 @@ function renderCrmFilterControl(column) {
   if (filterType === 'status') {
     const options = getStatusOptionsForColumn(column);
     return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${options.map((opt) => `<option value="${esc(opt)}" ${filter.value === opt ? 'selected' : ''}>${esc(opt)}</option>`).join('')}</select>`;
+  }
+
+  if (filterType === 'project') {
+    const options = ['tomahawk', 'romulus', 'unassigned'];
+    return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${options.map((opt) => `<option value="${esc(opt)}" ${filter.value === opt ? 'selected' : ''}>${esc(opt.charAt(0).toUpperCase() + opt.slice(1))}</option>`).join('')}</select>`;
   }
 
   if (filterType === 'number') {
@@ -710,6 +794,7 @@ function formatCrmCell(record, column) {
   const value = rawValue ?? (column.fallback ? column.fallback(record) : null);
   if (value === null || value === undefined || String(value).trim() === '') return '—';
   if (column.type === 'status') return statusBadge(String(value));
+  if (column.type === 'project') return projectBadge(String(value));
   if (column.type === 'date') return esc(fmtDate(value));
   return esc(String(value));
 }
@@ -998,6 +1083,28 @@ document.getElementById('rebuildWorkbookBtn').addEventListener('click', async ()
   }
 });
 
+const reclassifyProjectsBtn = document.getElementById('reclassifyProjectsBtn');
+if (reclassifyProjectsBtn) {
+  reclassifyProjectsBtn.addEventListener('click', async () => {
+    const outEl = document.getElementById('workbookImportOut');
+    try {
+      const data = await apiJSON('/admin/projects/reclassify', {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      outEl.textContent = JSON.stringify(data, null, 2);
+      outEl.style.display = 'block';
+      showToast(`Projects normalized for ${data.updated_records || 0} record(s)`, 'success');
+      await loadDashboard();
+      await loadCRMRecords(currentCrmSearchParams);
+    } catch (err) {
+      outEl.textContent = 'Error: ' + err.message;
+      outEl.style.display = 'block';
+      showToast('Project reclassification failed: ' + err.message, 'error');
+    }
+  });
+}
+
 // ── CRM Records ────────────────────────────────────────────────
 document.getElementById('searchAllBtn').addEventListener('click', () => loadCRMRecords({}));
 document.getElementById('searchBtn').addEventListener('click', () => {
@@ -1006,10 +1113,12 @@ document.getElementById('searchBtn').addEventListener('click', () => {
   const rng = document.getElementById('searchRange').value;
   const sec = document.getElementById('searchSec').value;
   const status = document.getElementById('searchStatus').value;
+  const project = document.getElementById('searchProject').value;
   if (twp) params.township = twp;
   if (rng) params.range = rng;
   if (sec) params.section = sec;
   if (status) params.status = status;
+  if (project) params.project = project;
   loadCRMRecords(params);
 });
 

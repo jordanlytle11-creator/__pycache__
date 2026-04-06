@@ -303,6 +303,9 @@
     .kv { display: grid; grid-template-columns: 1fr; gap: 6px; }
     .kv-row { font-size: 12px; color: var(--text); border-top: 1px dashed var(--border); padding-top: 6px; }
     .kv-row b { color: var(--muted); display: inline-block; min-width: 110px; }
+    .dashboard-project-panels { display: grid; gap: 14px; margin-top: 18px; }
+    .dashboard-project-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .dashboard-mini-kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 14px; }
   </style>
 </head>
 <body>
@@ -418,8 +421,11 @@
     <div id="page-dashboard" class="page active">
       <div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value" id="kpiTotal">—</div><div class="kpi-sub">All CRM entries</div></div>
+        <div class="kpi-card"><div class="kpi-label">Master Net Acres</div><div class="kpi-value" id="kpiNetAcres">—</div><div class="kpi-sub">Combined Tomahawk + Romulus</div></div>
+        <div class="kpi-card"><div class="kpi-label">Variable Count</div><div class="kpi-value" id="kpiVariables">—</div><div class="kpi-sub">Tomahawk parameter fields populated</div></div>
       </div>
-      <div id="dashStatusBreakdown" class="kpi-grid"></div>
+      <div class="text-muted" id="kpiScope" style="margin-bottom:10px;">Loading dashboard scope...</div>
+      <div id="dashProjectPanels" class="dashboard-project-panels"></div>
     </div>
 
     <!-- CRM Records -->
@@ -437,7 +443,8 @@
             <div class="form-group"><label>Range</label><input id="searchRange" type="number" placeholder="Any" /></div>
             <div class="form-group"><label>Section</label><input id="searchSec" type="number" placeholder="Any" /></div>
           </div>
-          <div class="form-group" style="max-width:200px;">
+          <div class="form-row cols3" style="grid-template-columns: 200px 200px 1fr; align-items:end;">
+            <div class="form-group" style="margin-bottom:0;">
             <label>Status</label>
             <select id="searchStatus">
               <option value="">All statuses</option>
@@ -452,6 +459,16 @@
               <option>Agreed to Terms</option>
               <option>Signed / In Hand</option>
             </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label>Project</label>
+              <select id="searchProject">
+                <option value="">All projects</option>
+                <option value="tomahawk">Tomahawk</option>
+                <option value="romulus">Romulus</option>
+              </select>
+            </div>
+            <div class="text-muted" style="padding-bottom:8px;">Project filtering and project badges are now available in CRM results.</div>
           </div>
           <button class="btn btn-primary" id="searchBtn">Search</button>
           <button class="btn btn-ghost" id="searchAllBtn" style="margin-left:8px;">Show All</button>
@@ -559,6 +576,7 @@
           </div>
           <button class="btn btn-primary" id="importWorkbookBtn">Import Workbook Data</button>
           <button class="btn btn-ghost" id="rebuildWorkbookBtn" style="margin-left:8px;">Rebuild CRM From Stored Workbook</button>
+          <button class="btn btn-outline" id="reclassifyProjectsBtn" style="margin-left:8px;">Reclassify Projects</button>
           <div id="workbookImportSummary" class="output-pre mt-4" style="display:none;"></div>
           <div id="workbookImportOut" class="output-pre mt-4" style="display:none;"></div>
         </div>

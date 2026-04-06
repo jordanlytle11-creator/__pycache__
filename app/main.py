@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, date
 from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect as sa_inspect
+from sqlalchemy import text, inspect as sa_inspect, or_, func as sa_func
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from uuid import uuid4
@@ -38,6 +38,10 @@ from app.schemas import (
     WorkbookImportResult,
     WorkbookTabRowsResult,
     WorkbookStorageStatus,
+    DashboardSummaryResponse,
+    DashboardProjectSummary,
+    DashboardStatusSummary,
+    CrmProjectAssignRequest,
 )
 
 models.Base.metadata.create_all(bind=engine)
@@ -98,6 +102,253 @@ def _coerce_acres(value) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+PROJECT_DEFINITIONS = [
+    {'key': 'tomahawk', 'name': 'Tomahawk', 'tokens': ('tomahawk',)},
+    {'key': 'romulus', 'name': 'Romulus', 'tokens': ('romulus',)},
+]
+
+PROJECT_SOURCE_KEYS = [
+    'project', 'project_name', 'project_code', 'work_project', 'program_name',
+    'ami_aoi', 'oklahoma_county_tomahawk_project', 'workbook_name',
+    'workbook_sheet', 'workbook_tab_key',
+]
+
+PROJECT_NORMALIZED_KEY = 'project_normalized'
+
+TOMAHAWK_PARAMETER_KEYS = [
+    'ami_aoi', 'oklahoma_county_tomahawk_project',
+    'state_code', 'county_code', 't_r_s', 'trs', 'location_number', 'well_name',
+    'dsu_name', 'pad_name', 'lease_number', 'lease_name', 'state', 'county',
+    'lessor_owner', 'owner_name', 'owner', 'lessee', 'lease_date', 'vol', 'pg',
+    'township', 'range', 'section', 'tract_description', 'status',
+    'gross_acres', 'net_acres', 'royalty', 'bonus_agreed', 'term_months',
+    'extension_months', 'lease_agent', 'lease_agent_notes', 'mailed_date',
+    'title_date_requested', 'title_verified', 'request_notes',
+    'lease_signed_and_returned', 'bonus_paid', 'recorded', 'lpr_completed',
+    'curative_identified',
+]
+
+
+def _normalize_text_token(value) -> str:
+    if value is None:
+        return ''
+    text_value = str(value).strip().lower()
+    return text_value
+
+
+def _is_non_empty(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _record_values_for_project(record: CrmRecord) -> list[str]:
+    values: list[str] = []
+    extra = dict(record.extra_data or {})
+
+    for key in PROJECT_SOURCE_KEYS:
+        if _is_non_empty(extra.get(key)):
+            values.append(str(extra.get(key)))
+
+    for field_name in ('company', 'contact', 'lease_agent', 'lessor_owner', 'lessee'):
+        value = getattr(record, field_name, None)
+        if _is_non_empty(value):
+            values.append(str(value))
+
+    return values
+
+
+def _detect_project_key(record: CrmRecord) -> Optional[str]:
+    extra = dict(record.extra_data or {})
+    explicit = _normalize_text_token(extra.get(PROJECT_NORMALIZED_KEY))
+    if explicit in {'tomahawk', 'romulus'}:
+        return explicit
+
+    project_values = _record_values_for_project(record)
+    normalized_values = [_normalize_text_token(v) for v in project_values if _is_non_empty(v)]
+
+    for definition in PROJECT_DEFINITIONS:
+        if any(any(token in value for token in definition['tokens']) for value in normalized_values):
+            return definition['key']
+    return None
+
+
+def _project_key_from_query(project: Optional[str]) -> Optional[str]:
+    if project is None:
+        return None
+    value = str(project).strip().lower()
+    if not value:
+        return None
+    if value not in {'tomahawk', 'romulus'}:
+        raise HTTPException(status_code=400, detail='project must be tomahawk or romulus')
+    return value
+
+
+def _set_normalized_project(record: CrmRecord, forced_project: Optional[str] = None) -> Optional[str]:
+    extra = dict(record.extra_data or {})
+    project_key = forced_project or _detect_project_key(record)
+    if project_key in {'tomahawk', 'romulus'}:
+        extra[PROJECT_NORMALIZED_KEY] = project_key
+    else:
+        extra.pop(PROJECT_NORMALIZED_KEY, None)
+        project_key = None
+    record.extra_data = extra
+    return project_key
+
+
+def _filter_records_by_project(records: list[CrmRecord], project_key: Optional[str]) -> list[CrmRecord]:
+    if project_key is None:
+        return records
+    return [record for record in records if _detect_project_key(record) == project_key]
+
+
+def _record_variable_count(record: CrmRecord) -> int:
+    extra = dict(record.extra_data or {})
+    values = {
+        'status': record.status,
+        'township': record.township,
+        'range': record.range,
+        'section': record.section,
+        'lease_agent': record.lease_agent,
+        'lease_agent_notes': record.lease_agent_notes,
+        'lessor_owner': record.lessor_owner,
+        'lessee': record.lessee,
+        'lease_date': record.lease_date,
+        'vol': record.vol,
+        'pg': record.pg,
+        'tract_description': record.tract_description,
+        'gross_acres': record.gross_acres,
+        'net_acres': record.net_acres,
+        'royalty': record.royalty,
+        'bonus_agreed': record.bonus_agreed,
+        'term_months': record.term_months,
+        'extension_months': record.extension_months,
+        'mailed_date': record.mailed_date,
+    }
+
+    count = 0
+    for key in TOMAHAWK_PARAMETER_KEYS:
+        value = values.get(key)
+        if value is None:
+            value = extra.get(key)
+        if _is_non_empty(value):
+            count += 1
+    return count
+
+
+def _records_query_for_user(db: Session, user: User):
+    query = db.query(CrmRecord)
+    if user.is_admin or user.is_manager:
+        return query
+
+    user_email = (user.email or '').strip().lower()
+    if not user_email:
+        return query.filter(text('1 = 0'))
+
+    return query.filter(
+        or_(
+            sa_func.lower(CrmRecord.lease_agent) == user_email,
+            sa_func.lower(CrmRecord.contact) == user_email,
+        )
+    )
+
+
+def _summarize_dashboard_records(records: list[CrmRecord], role: str) -> DashboardSummaryResponse:
+    project_maps = {
+        definition['key']: {
+            'definition': definition,
+            'records': [],
+            'total_net_acres': 0.0,
+            'variable_count': 0,
+            'statuses': {},
+        }
+        for definition in PROJECT_DEFINITIONS
+    }
+
+    master_statuses: dict[str, dict] = {}
+    master_total_net_acres = 0.0
+    master_variable_count = 0
+
+    for record in records:
+        status_name = (record.status or 'No Contact').strip() or 'No Contact'
+        net_acres = _coerce_acres(record.net_acres)
+        variable_count = _record_variable_count(record)
+
+        project_key = _detect_project_key(record)
+        if project_key in project_maps:
+            project_state = project_maps[project_key]
+            project_state['records'].append(record)
+            project_state['total_net_acres'] += net_acres
+            project_state['variable_count'] += variable_count
+
+            status_state = project_state['statuses'].setdefault(status_name, {'record_count': 0, 'net_acres_total': 0.0, 'variable_count': 0})
+            status_state['record_count'] += 1
+            status_state['net_acres_total'] += net_acres
+            status_state['variable_count'] += variable_count
+
+        master_total_net_acres += net_acres
+        master_variable_count += variable_count
+        master_state = master_statuses.setdefault(status_name, {'record_count': 0, 'net_acres_total': 0.0, 'variable_count': 0})
+        master_state['record_count'] += 1
+        master_state['net_acres_total'] += net_acres
+        master_state['variable_count'] += variable_count
+
+    project_summaries: list[DashboardProjectSummary] = []
+    for definition in PROJECT_DEFINITIONS:
+        state = project_maps[definition['key']]
+        statuses = [
+            DashboardStatusSummary(
+                status=status,
+                record_count=data['record_count'],
+                net_acres_total=round(data['net_acres_total'], 4),
+                variable_count=data['variable_count'],
+            )
+            for status, data in sorted(
+                state['statuses'].items(),
+                key=lambda item: (-item[1]['net_acres_total'], item[0].lower()),
+            )
+        ]
+        project_summaries.append(
+            DashboardProjectSummary(
+                project_key=definition['key'],
+                project_name=definition['name'],
+                total_records=len(state['records']),
+                total_net_acres=round(state['total_net_acres'], 4),
+                variable_count=state['variable_count'],
+                statuses=statuses,
+            )
+        )
+
+    master_summary = DashboardProjectSummary(
+        project_key='master',
+        project_name='Master',
+        total_records=len(records),
+        total_net_acres=round(master_total_net_acres, 4),
+        variable_count=master_variable_count,
+        statuses=[
+            DashboardStatusSummary(
+                status=status,
+                record_count=data['record_count'],
+                net_acres_total=round(data['net_acres_total'], 4),
+                variable_count=data['variable_count'],
+            )
+            for status, data in sorted(
+                master_statuses.items(),
+                key=lambda item: (-item[1]['net_acres_total'], item[0].lower()),
+            )
+        ],
+    )
+
+    return DashboardSummaryResponse(
+        role=role,
+        scope_record_count=len(records),
+        project_summaries=project_summaries,
+        master_summary=master_summary,
+    )
 
 app = FastAPI(title='Local ERP/CRM MVP')
 
@@ -1335,6 +1586,7 @@ def create_record(record: CrmRecordCreate, db: Session = Depends(get_db), curren
         term_months=record.term_months, extension_months=record.extension_months,
         mailed_date=record.mailed_date,
     )
+    _set_normalized_project(db_record)
     db.add(db_record)
     db.commit()
     db.refresh(db_record)
@@ -1357,6 +1609,7 @@ def create_record_link(record: CrmRecordCreate, db: Session = Depends(get_db)):
         term_months=record.term_months, extension_months=record.extension_months,
         mailed_date=record.mailed_date,
     )
+    _set_normalized_project(db_record)
     db.add(db_record)
     db.commit()
     db.refresh(db_record)
@@ -1389,6 +1642,7 @@ def update_record(record_id: int, update: CrmRecordUpdate, db: Session = Depends
                 merged_extra[key] = value
         record.extra_data = merged_extra
 
+    _set_normalized_project(record)
     record.trscode = f"T{record.township}R{record.range}S{record.section}"
     db.commit()
     db.refresh(record)
@@ -1396,9 +1650,13 @@ def update_record(record_id: int, update: CrmRecordUpdate, db: Session = Depends
 
 
 @app.get('/crm', response_model=List[CrmRecordRead])
-def list_records(skip: int = 0, limit: int = 5000, db: Session = Depends(get_db), user: User = Depends(require_manager_or_admin)):
+def list_records(skip: int = 0, limit: int = 5000, project: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_active_user)):
     safe_limit = max(1, min(limit, 300000))
-    return db.query(CrmRecord).offset(skip).limit(safe_limit).all()
+    project_key = _project_key_from_query(project)
+    query = _records_query_for_user(db, user)
+    records = query.all()
+    scoped = _filter_records_by_project(records, project_key)
+    return scoped[skip:skip + safe_limit]
 
 
 @app.get('/crm/link-search', response_model=List[CrmRecordRead], dependencies=[Depends(require_link_permission('read_crm'))])
@@ -1421,11 +1679,12 @@ def search_records(
     range: int = None,
     section: int = None,
     status: str = None,
+    project: str = None,
     limit: int = 5000,
     db: Session = Depends(get_db),
-    user: User = Depends(require_manager_or_admin),
+    user: User = Depends(get_current_active_user),
 ):
-    q = db.query(CrmRecord)
+    q = _records_query_for_user(db, user)
     if township is not None:
         q = q.filter(CrmRecord.township == township)
     if range is not None:
@@ -1434,8 +1693,47 @@ def search_records(
         q = q.filter(CrmRecord.section == section)
     if status is not None:
         q = q.filter(CrmRecord.status == status)
+    records = q.all()
+    project_key = _project_key_from_query(project)
+    scoped = _filter_records_by_project(records, project_key)
     safe_limit = max(1, min(limit, 300000))
-    return q.limit(safe_limit).all()
+    return scoped[:safe_limit]
+
+
+@app.patch('/admin/crm/{record_id}/project', response_model=CrmRecordRead)
+def assign_crm_project(record_id: int, body: CrmProjectAssignRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    record = db.query(CrmRecord).filter(CrmRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail='CRM record not found')
+
+    _set_normalized_project(record, forced_project=body.project_key)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.post('/admin/projects/reclassify')
+def reclassify_projects(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    records = db.query(CrmRecord).all()
+    counts = {'tomahawk': 0, 'romulus': 0, 'unassigned': 0}
+    updated = 0
+
+    for record in records:
+        before = (dict(record.extra_data or {}).get(PROJECT_NORMALIZED_KEY) or '').strip().lower()
+        after = _set_normalized_project(record)
+        if after in {'tomahawk', 'romulus'}:
+            counts[after] += 1
+        else:
+            counts['unassigned'] += 1
+        if before != (after or ''):
+            updated += 1
+
+    db.commit()
+    return {
+        'total_records': len(records),
+        'updated_records': updated,
+        'project_counts': counts,
+    }
 
 
 @app.post('/crm/shapefile')
@@ -1476,6 +1774,18 @@ def manager_kpis(db: Session = Depends(get_db), user: User = Depends(require_man
         for st in ['No Contact', 'Working', 'Signed / In Hand']
     }
     return {'total_records': total, 'status_breakdown': statuses}
+
+
+@app.get('/dashboard/summary', response_model=DashboardSummaryResponse)
+def dashboard_summary(db: Session = Depends(get_db), user: User = Depends(get_current_active_user)):
+    role = 'employee'
+    if user.is_admin:
+        role = 'admin'
+    elif user.is_manager:
+        role = 'manager'
+
+    records = _records_query_for_user(db, user).limit(300000).all()
+    return _summarize_dashboard_records(records, role)
 
 
 @app.post('/crm/import-csv')
