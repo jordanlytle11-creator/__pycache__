@@ -13,6 +13,7 @@ let currentCrmRecords = [];
 let currentCrmRawRecords = [];
 let crmSavedSnapshot = [];
 let pendingCrmEditsById = new Map();
+const DEFAULT_CRM_COLUMN_WIDTH = 180;
 const DEFAULT_CRM_ROW_HEIGHT = 44;
 const crmLayoutStateByRole = {};
 const crmFilterStateByRole = {};
@@ -721,7 +722,7 @@ function getColumnFilterType(column) {
 function getColumnWidth(column) {
   const state = getCrmLayoutState();
   if (state.widths[column.label]) return state.widths[column.label];
-  return Math.max(140, Math.min(320, 80 + column.label.length * 8));
+  return DEFAULT_CRM_COLUMN_WIDTH;
 }
 
 function getColumnFilter(column) {
@@ -1008,6 +1009,26 @@ function getRecordValue(record, keys = []) {
   return null;
 }
 
+function getCrmFieldPopupValue(record, column) {
+  const rawValue = getRecordValue(record, column.keys || []);
+  const value = rawValue ?? (column.fallback ? column.fallback(record) : null);
+  if (value === null || value === undefined || String(value).trim() === '') return '—';
+  return String(value);
+}
+
+function openCrmFieldModal(record, column) {
+  const titleEl = document.getElementById('crmFieldModalTitle');
+  const labelEl = document.getElementById('crmFieldModalLabel');
+  const valueEl = document.getElementById('crmFieldModalValue');
+  if (!titleEl || !labelEl || !valueEl || !record || !column) return;
+
+  const recordTitle = record.company || record.lessor_owner || record.contact || `Record ${record.id}`;
+  titleEl.textContent = recordTitle;
+  labelEl.textContent = column.label;
+  valueEl.textContent = getCrmFieldPopupValue(record, column);
+  openModal('crmFieldModal');
+}
+
 function formatCrmCell(record, column) {
   const rawValue = getRecordValue(record, column.keys || []);
   const value = rawValue ?? (column.fallback ? column.fallback(record) : null);
@@ -1282,10 +1303,29 @@ function startInlineCrmCellEdit(cell) {
 }
 
 function bindCrmEditableCells() {
-  document.querySelectorAll('td.crm-editable').forEach((cell) => {
+  document.querySelectorAll('#crmTbody td[data-record-index][data-column-index]').forEach((cell) => {
+    let clickTimer = null;
+    cell.classList.add('crm-cell-view-trigger');
+
     cell.addEventListener('click', () => {
-      startInlineCrmCellEdit(cell);
+      clickTimer = window.setTimeout(() => {
+        const recordIndex = parseInt(cell.dataset.recordIndex, 10);
+        const columnIndex = parseInt(cell.dataset.columnIndex, 10);
+        const record = currentCrmRecords[recordIndex];
+        const column = getCrmColumns()[columnIndex];
+        openCrmFieldModal(record, column);
+      }, 180);
     });
+
+    if (cell.classList.contains('crm-editable')) {
+      cell.addEventListener('dblclick', () => {
+        if (clickTimer) {
+          window.clearTimeout(clickTimer);
+          clickTimer = null;
+        }
+        startInlineCrmCellEdit(cell);
+      });
+    }
   });
 }
 

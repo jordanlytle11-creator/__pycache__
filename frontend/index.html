@@ -327,6 +327,19 @@
       background: #fff;
       color: var(--text);
     }
+    .crm-cell-view-trigger { cursor: pointer; }
+    .crm-field-popup-value {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      color: var(--text);
+      max-height: 320px;
+      overflow: auto;
+    }
     .batch-individual-list { max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: grid; gap: 8px; }
     .batch-individual-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
     .batch-individual-row label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
@@ -466,7 +479,7 @@
       <div class="card mb-4">
         <div class="card-header"><h3>Search &amp; Filter</h3></div>
         <div class="card-body">
-          <div class="text-muted mb-4">Click a CRM table cell to edit inline. Press Enter to save or Escape to cancel.</div>
+          <div class="text-muted mb-4">Click a CRM table cell to view full contents. Double-click editable cells to edit inline. Press Enter to save or Escape to cancel.</div>
           <div class="form-row cols3">
             <div class="form-group"><label>Township</label><input id="searchTwp" type="number" placeholder="Any" /></div>
             <div class="form-group"><label>Range</label><input id="searchRange" type="number" placeholder="Any" /></div>
@@ -887,6 +900,25 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close="findReplaceModal">Cancel</button>
       <button class="btn btn-primary" id="executeBatchEditBtn">Apply Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: CRM Field Detail -->
+<div class="modal-overlay" id="crmFieldModal">
+  <div class="modal" style="width:560px;max-width:98vw;">
+    <div class="modal-header">
+      <h3 id="crmFieldModalTitle">Field Value</h3>
+      <button class="close-btn" data-close="crmFieldModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:0;">
+        <label id="crmFieldModalLabel">Value</label>
+        <div id="crmFieldModalValue" class="crm-field-popup-value"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="crmFieldModal">Close</button>
     </div>
   </div>
 </div>
