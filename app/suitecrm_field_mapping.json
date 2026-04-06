@@ -1,0 +1,11 @@
+{
+  "last_name": "{{contact_or_company_or_record}}",
+  "account_name": "{{company_or_none}}",
+  "title": "TRS {{trscode}}",
+  "status": "New",
+  "lead_source": "ERP",
+  "lead_source_description": "{{status_or_none}}",
+  "description": "Local ERP Record ID: {{record_id}}\nTRS: {{trscode}}\nProject: {{project_or_unassigned}}\nStatus: {{status_or_no_contact}}",
+  "phone_work": "{{extra_phone_or_none}}",
+  "source_description": "local_erp_record_id={{record_id}}"
+}

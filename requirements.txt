@@ -4,6 +4,7 @@ sqlalchemy
 pydantic
 python-dotenv
 passlib[bcrypt]
+bcrypt<4
 python-jose[cryptography]
 geopandas
 fiona

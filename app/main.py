@@ -22,6 +22,7 @@ import smtplib
 from app import models
 from app.db import SessionLocal, engine, db_path
 from app.models import CrmRecord, User, Role, InviteToken, LinkControl
+from app.suitecrm import SuiteCrmClient, SuiteCrmError, load_suitecrm_field_mapping, map_crm_record_to_suitecrm_fields
 from app.schemas import (
     CrmRecordCreate,
     CrmRecordRead,
@@ -91,6 +92,24 @@ def _migrate_user_columns():
 
 
 _migrate_user_columns()
+
+
+def _migrate_suitecrm_sync_tables():
+    with engine.begin() as conn:
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS suitecrm_sync_map (
+                local_record_id INTEGER NOT NULL,
+                module_name TEXT NOT NULL,
+                suitecrm_id TEXT,
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error TEXT,
+                synced_at TEXT,
+                PRIMARY KEY (local_record_id, module_name)
+            )
+        '''))
+
+
+_migrate_suitecrm_sync_tables()
 
 
 def _normalize_existing_acres_nulls():
@@ -435,6 +454,8 @@ FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 FORGOT_CREDENTIALS_LOG = Path(__file__).resolve().parents[1] / "forgot_credentials_requests.log"
 INVITE_REQUESTS_LOG = Path(__file__).resolve().parents[1] / "invite_requests.log"
 WORKBOOK_STORAGE_PATH = Path(os.getenv('LOCAL_ERP_WORKBOOK_PATH', str(db_path.with_name('stored_workbook.xlsx'))))
+SUITECRM_SYNC_LOG = Path(__file__).resolve().parents[1] / 'suitecrm_sync.log'
+SUITECRM_FIELD_MAPPING_PATH = Path(__file__).resolve().parents[1] / 'app' / 'suitecrm_field_mapping.json'
 
 # security utils
 SECRET_KEY = os.getenv('LOCAL_ERP_SECRET_KEY', 'change-this-secret-in-production')
@@ -450,6 +471,74 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def _get_suitecrm_client() -> SuiteCrmClient:
+    return SuiteCrmClient(
+        base_url=os.getenv('LOCAL_ERP_SUITECRM_BASE_URL', ''),
+        username=os.getenv('LOCAL_ERP_SUITECRM_USERNAME', ''),
+        password=os.getenv('LOCAL_ERP_SUITECRM_PASSWORD', ''),
+    )
+
+
+def _get_suitecrm_mapping() -> dict:
+    return load_suitecrm_field_mapping(str(SUITECRM_FIELD_MAPPING_PATH))
+
+
+def _log_suitecrm_event(event_type: str, payload: dict):
+    log_line = {
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'event': event_type,
+        'payload': payload,
+    }
+    with open(SUITECRM_SYNC_LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(log_line, ensure_ascii=True) + '\n')
+
+
+def _get_suitecrm_sync_entry(local_record_id: int, module_name: str) -> Optional[dict]:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text('''
+                SELECT local_record_id, module_name, suitecrm_id, last_status, last_error, synced_at
+                FROM suitecrm_sync_map
+                WHERE local_record_id = :local_record_id AND module_name = :module_name
+            '''),
+            {'local_record_id': local_record_id, 'module_name': module_name},
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        'local_record_id': row[0],
+        'module_name': row[1],
+        'suitecrm_id': row[2],
+        'last_status': row[3],
+        'last_error': row[4],
+        'synced_at': row[5],
+    }
+
+
+def _upsert_suitecrm_sync_entry(local_record_id: int, module_name: str, suitecrm_id: Optional[str], status: str, error: Optional[str] = None):
+    with engine.begin() as conn:
+        conn.execute(
+            text('''
+                INSERT INTO suitecrm_sync_map (local_record_id, module_name, suitecrm_id, last_status, last_error, synced_at)
+                VALUES (:local_record_id, :module_name, :suitecrm_id, :last_status, :last_error, :synced_at)
+                ON CONFLICT(local_record_id, module_name)
+                DO UPDATE SET
+                    suitecrm_id=excluded.suitecrm_id,
+                    last_status=excluded.last_status,
+                    last_error=excluded.last_error,
+                    synced_at=excluded.synced_at
+            '''),
+            {
+                'local_record_id': local_record_id,
+                'module_name': module_name,
+                'suitecrm_id': suitecrm_id,
+                'last_status': status,
+                'last_error': error,
+                'synced_at': datetime.utcnow().isoformat() + 'Z',
+            },
+        )
 
 
 def verify_password(plain_password, hashed_password):
@@ -1647,6 +1736,152 @@ def create_link_control(link_in: LinkControlCreate, db: Session = Depends(get_db
     db.add(link)
     db.commit()
     return {'permission': link.permission, 'expires_in_hours': link_in.expires_in_hours}
+
+
+@app.get('/admin/suitecrm/health')
+def suitecrm_health(admin: User = Depends(require_admin)):
+    client = _get_suitecrm_client()
+    configured = client.is_configured()
+    if not configured:
+        return {
+            'configured': False,
+            'connected': False,
+            'message': 'Set LOCAL_ERP_SUITECRM_BASE_URL, LOCAL_ERP_SUITECRM_USERNAME, and LOCAL_ERP_SUITECRM_PASSWORD',
+        }
+
+    try:
+        session_id = client.login()
+        return {
+            'configured': True,
+            'connected': True,
+            'session_id_prefix': session_id[:8],
+        }
+    except SuiteCrmError as exc:
+        return {
+            'configured': True,
+            'connected': False,
+            'error': str(exc),
+        }
+
+
+@app.get('/admin/suitecrm/sample-read')
+def suitecrm_sample_read(module: str = 'Leads', max_results: int = 5, admin: User = Depends(require_admin)):
+    client = _get_suitecrm_client()
+    if not client.is_configured():
+        raise HTTPException(status_code=400, detail='SuiteCRM is not configured')
+
+    try:
+        response = client.get_entry_list(module=module, max_results=max_results)
+    except SuiteCrmError as exc:
+        raise HTTPException(status_code=502, detail=f'SuiteCRM read failed: {exc}')
+
+    entries = response.get('entry_list') if isinstance(response, dict) else []
+    return {
+        'module': module,
+        'result_count': len(entries or []),
+        'raw': response,
+    }
+
+
+@app.get('/admin/suitecrm/sync-record/{record_id}/dry-run')
+def suitecrm_sync_record_dry_run(record_id: int, module: str = 'Leads', db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    record = db.query(CrmRecord).filter(CrmRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail='CRM record not found')
+
+    existing_sync = _get_suitecrm_sync_entry(local_record_id=record.id, module_name=module)
+    project_key = _detect_project_key(record)
+    mapping = _get_suitecrm_mapping()
+    fields = map_crm_record_to_suitecrm_fields(record, project_key, mapping=mapping)
+    if existing_sync and existing_sync.get('suitecrm_id'):
+        fields['id'] = existing_sync['suitecrm_id']
+
+    return {
+        'dry_run': True,
+        'module': module,
+        'local_record_id': record.id,
+        'project_key': project_key,
+        'idempotent_target': existing_sync.get('suitecrm_id') if existing_sync else None,
+        'field_mapping_path': str(SUITECRM_FIELD_MAPPING_PATH),
+        'mapped_fields': fields,
+    }
+
+
+@app.post('/admin/suitecrm/sync-record/{record_id}')
+def suitecrm_sync_record(record_id: int, module: str = 'Leads', db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    client = _get_suitecrm_client()
+    if not client.is_configured():
+        raise HTTPException(status_code=400, detail='SuiteCRM is not configured')
+
+    record = db.query(CrmRecord).filter(CrmRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail='CRM record not found')
+
+    existing_sync = _get_suitecrm_sync_entry(local_record_id=record.id, module_name=module)
+    project_key = _detect_project_key(record)
+    mapping = _get_suitecrm_mapping()
+    fields = map_crm_record_to_suitecrm_fields(record, project_key, mapping=mapping)
+    if existing_sync and existing_sync.get('suitecrm_id'):
+        fields['id'] = existing_sync['suitecrm_id']
+
+    try:
+        write_response = client.set_entry(module=module, fields=fields)
+    except SuiteCrmError as exc:
+        _upsert_suitecrm_sync_entry(local_record_id=record.id, module_name=module, suitecrm_id=existing_sync.get('suitecrm_id') if existing_sync else None, status='error', error=str(exc))
+        _log_suitecrm_event('sync_error', {
+            'module': module,
+            'local_record_id': record.id,
+            'suitecrm_id': existing_sync.get('suitecrm_id') if existing_sync else None,
+            'error': str(exc),
+        })
+        raise HTTPException(status_code=502, detail=f'SuiteCRM sync failed: {exc}')
+
+    suitecrm_id = None
+    if isinstance(write_response, dict):
+        suitecrm_id = write_response.get('id')
+    if suitecrm_id is None and existing_sync:
+        suitecrm_id = existing_sync.get('suitecrm_id')
+
+    _upsert_suitecrm_sync_entry(local_record_id=record.id, module_name=module, suitecrm_id=suitecrm_id, status='ok', error=None)
+    _log_suitecrm_event('sync_ok', {
+        'module': module,
+        'local_record_id': record.id,
+        'suitecrm_id': suitecrm_id,
+        'idempotent_update': bool(existing_sync and existing_sync.get('suitecrm_id')),
+    })
+
+    return {
+        'module': module,
+        'local_record_id': record.id,
+        'project_key': project_key,
+        'idempotent_update': bool(existing_sync and existing_sync.get('suitecrm_id')),
+        'suitecrm_id': suitecrm_id,
+        'suitecrm_response': write_response,
+    }
+
+
+@app.get('/admin/suitecrm/sync-log-tail')
+def suitecrm_sync_log_tail(lines: int = 50, admin: User = Depends(require_admin)):
+    safe_lines = max(1, min(lines, 500))
+    if not SUITECRM_SYNC_LOG.exists():
+        return {
+            'line_count': 0,
+            'lines': [],
+        }
+
+    content_lines = SUITECRM_SYNC_LOG.read_text(encoding='utf-8').splitlines()
+    tail = content_lines[-safe_lines:]
+    parsed = []
+    for line in tail:
+        try:
+            parsed.append(json.loads(line))
+        except json.JSONDecodeError:
+            parsed.append({'raw': line})
+
+    return {
+        'line_count': len(parsed),
+        'lines': parsed,
+    }
 
 
 @app.post('/crm', response_model=CrmRecordRead)
