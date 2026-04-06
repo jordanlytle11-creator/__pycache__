@@ -251,9 +251,11 @@ const employeeCrmColumns = [
 ];
 
 const crmColumnEditors = {
+  'PROJECT': { extraKeys: ['project_normalized', 'project', 'project_name'], type: 'project' },
   'AMI/AOI': { extraKeys: ['ami_aoi'] },
   'STATE CODE': { extraKeys: ['state_code'] },
   'COUNTY CODE': { extraKeys: ['county_code'] },
+  'T-R-S': { type: 'trs', extraKeys: ['t_r_s', 'trs'] },
   'Location #': { extraKeys: ['location_number'] },
   'Well Name': { extraKeys: ['well_name'] },
   'DSU Name': { extraKeys: ['dsu_name'] },
@@ -800,9 +802,36 @@ function formatCrmCell(record, column) {
 }
 
 function getCrmEditPromptValue(record, column) {
+  if (column.label === 'T-R-S') {
+    const t = record.township ?? '?';
+    const r = record.range ?? '?';
+    const s = record.section ?? '?';
+    return `T${t}R${r}S${s}`;
+  }
+  if (column.label === 'PROJECT') {
+    return detectProjectFromRecord(record) || '';
+  }
   const rawValue = getRecordValue(record, column.keys || []);
   if (rawValue === null || rawValue === undefined) return '';
   return String(rawValue);
+}
+
+function parseTrsValue(input) {
+  const raw = String(input || '').trim();
+  if (!raw) throw new Error('Enter T-R-S as T25R9S14 or 25-9-14');
+
+  const compact = raw.toUpperCase().replace(/\s+/g, '');
+  const labeled = compact.match(/^T?(\d+)R(\d+)S(\d+)$/);
+  if (labeled) {
+    return { township: Number(labeled[1]), range: Number(labeled[2]), section: Number(labeled[3]) };
+  }
+
+  const parts = raw.split(/[^0-9]+/).filter(Boolean);
+  if (parts.length === 3) {
+    return { township: Number(parts[0]), range: Number(parts[1]), section: Number(parts[2]) };
+  }
+
+  throw new Error('Invalid T-R-S format. Use T25R9S14 or 25-9-14');
 }
 
 function normalizeEditedValue(rawValue, editor) {
@@ -824,6 +853,35 @@ function normalizeEditedValue(rawValue, editor) {
 function buildCrmUpdatePayload(column, value) {
   const editor = getCrmColumnEditor(column);
   if (!editor) return null;
+
+  if (editor.type === 'trs') {
+    const parsed = parseTrsValue(value);
+    const trsText = `T${parsed.township}R${parsed.range}S${parsed.section}`;
+    return {
+      township: parsed.township,
+      range: parsed.range,
+      section: parsed.section,
+      extra_data: {
+        t_r_s: trsText,
+        trs: trsText,
+      },
+    };
+  }
+
+  if (editor.type === 'project') {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized && !['tomahawk', 'romulus', 'unassigned', 'none'].includes(normalized)) {
+      throw new Error('Project must be Tomahawk, Romulus, or blank');
+    }
+    const projectValue = ['unassigned', 'none'].includes(normalized) ? null : (normalized || null);
+    return {
+      extra_data: {
+        project_normalized: projectValue,
+        project: projectValue,
+        project_name: projectValue,
+      },
+    };
+  }
 
   const normalizedValue = normalizeEditedValue(value, editor);
   if (normalizedValue === null && ['company', 'township', 'range', 'section'].includes(editor.field)) {
