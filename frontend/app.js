@@ -1045,6 +1045,32 @@ async function saveCrmCellInline(record, column, value) {
   });
 }
 
+async function applyInlineEditToSelectedRows(sourceRecord, column, value) {
+  const targets = currentCrmRawRecords.filter(
+    (record) => selectedCrmRecordIds.has(record.id) && record.id !== sourceRecord.id
+  );
+  if (!targets.length) return { updated: 0, failed: 0 };
+
+  const payload = buildCrmUpdatePayload(column, value);
+  if (!payload) return { updated: 0, failed: 0 };
+
+  let updated = 0;
+  let failed = 0;
+  for (const record of targets) {
+    try {
+      await apiJSON(`/crm/${record.id}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+      updated++;
+    } catch {
+      failed++;
+    }
+  }
+  return { updated, failed };
+}
+
 function startInlineCrmCellEdit(cell) {
   if (!cell || cell.dataset.editing === '1') return;
 
@@ -1093,8 +1119,19 @@ function startInlineCrmCellEdit(cell) {
     input.disabled = true;
     try {
       await saveCrmCellInline(record, column, nextValue);
+      let cascadeResult = { updated: 0, failed: 0 };
+      const shouldCascade = selectedCrmRecordIds.size > 1 && selectedCrmRecordIds.has(record.id);
+      if (shouldCascade) {
+        cascadeResult = await applyInlineEditToSelectedRows(record, column, nextValue);
+      }
       delete cell.dataset.editing;
-      showToast(`${column.label} updated`, 'success');
+      if (cascadeResult.updated || cascadeResult.failed) {
+        const total = cascadeResult.updated + 1;
+        const failureNote = cascadeResult.failed ? `, ${cascadeResult.failed} failed` : '';
+        showToast(`${column.label} updated on ${total} selected record(s)${failureNote}`, cascadeResult.failed ? 'error' : 'success');
+      } else {
+        showToast(`${column.label} updated`, 'success');
+      }
       await loadCRMRecords(currentCrmSearchParams);
       await loadDashboard();
     } catch (err) {
