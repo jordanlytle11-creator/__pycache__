@@ -150,16 +150,22 @@ function getSelectedCrmRecords() {
   return currentCrmRawRecords.filter((record) => selectedCrmRecordIds.has(record.id));
 }
 
+function getBatchTargetRecords() {
+  const scope = document.getElementById('batchEditScope')?.value || 'selected';
+  if (scope === 'visible') return currentCrmRecords;
+  return getSelectedCrmRecords();
+}
+
 function renderBatchIndividualRows(column) {
   const container = document.getElementById('batchIndividualRows');
   if (!container) return;
-  const selected = getSelectedCrmRecords();
-  if (selected.length === 0) {
-    container.innerHTML = '<div class="text-muted">No selected records.</div>';
+  const targetRecords = getBatchTargetRecords();
+  if (targetRecords.length === 0) {
+    container.innerHTML = '<div class="text-muted">No records in scope.</div>';
     return;
   }
 
-  container.innerHTML = selected.map((record) => {
+  container.innerHTML = targetRecords.map((record) => {
     const label = record.company || record.lessor_owner || record.contact || `Record ${record.id}`;
     const currentValue = getCrmEditPromptValue(record, column);
     return `
@@ -1025,10 +1031,94 @@ async function editCrmCell(recordIndex, columnIndex) {
   }
 }
 
+async function saveCrmCellInline(record, column, value) {
+  const payload = buildCrmUpdatePayload(column, value);
+  if (!payload) return;
+  await apiJSON(`/crm/${record.id}`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+}
+
+function startInlineCrmCellEdit(cell) {
+  if (!cell || cell.dataset.editing === '1') return;
+
+  const recordIndex = parseInt(cell.dataset.recordIndex, 10);
+  const columnIndex = parseInt(cell.dataset.columnIndex, 10);
+  const record = currentCrmRecords[recordIndex];
+  const column = getCrmColumns()[columnIndex];
+  const editor = getCrmColumnEditor(column);
+  if (!record || !column || !editor) return;
+
+  const original = getCrmEditPromptValue(record, column);
+  cell.dataset.editing = '1';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'crm-inline-editor';
+  input.value = original;
+  input.setAttribute('aria-label', `Edit ${column.label}`);
+
+  if (editor.type === 'project') {
+    input.placeholder = getAllProjects().map((p) => p.name).join(', ');
+  }
+
+  cell.textContent = '';
+  cell.appendChild(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  const cancel = () => {
+    if (finished) return;
+    finished = true;
+    delete cell.dataset.editing;
+    cell.innerHTML = formatCrmCell(record, column);
+  };
+
+  const commit = async () => {
+    if (finished) return;
+    finished = true;
+    const nextValue = input.value;
+    if (nextValue === original) {
+      delete cell.dataset.editing;
+      cell.innerHTML = formatCrmCell(record, column);
+      return;
+    }
+
+    input.disabled = true;
+    try {
+      await saveCrmCellInline(record, column, nextValue);
+      delete cell.dataset.editing;
+      showToast(`${column.label} updated`, 'success');
+      await loadCRMRecords(currentCrmSearchParams);
+      await loadDashboard();
+    } catch (err) {
+      delete cell.dataset.editing;
+      cell.innerHTML = formatCrmCell(record, column);
+      showToast('Update failed: ' + err.message, 'error');
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    commit();
+  });
+}
+
 function bindCrmEditableCells() {
   document.querySelectorAll('td.crm-editable').forEach((cell) => {
-    cell.addEventListener('dblclick', () => {
-      editCrmCell(parseInt(cell.dataset.recordIndex, 10), parseInt(cell.dataset.columnIndex, 10));
+    cell.addEventListener('click', () => {
+      startInlineCrmCellEdit(cell);
     });
   });
 }
@@ -1450,17 +1540,22 @@ document.getElementById('saveNewProjectBtn').addEventListener('click', () => {
 
 // ── Batch Find & Replace ───────────────────────────────────────
 document.getElementById('batchEditBtn').addEventListener('click', () => {
-  if (selectedCrmRecordIds.size === 0) { showToast('Select records first', 'error'); return; }
   const colSelect = document.getElementById('batchEditColumn');
   const modeSelect = document.getElementById('batchEditMode');
+  const scopeSelect = document.getElementById('batchEditScope');
   const editableCols = getCrmColumns().filter((col) => getCrmColumnEditor(col));
+  if (editableCols.length === 0) { showToast('No editable columns available', 'error'); return; }
+
+  const hasSelected = selectedCrmRecordIds.size > 0;
+  scopeSelect.value = hasSelected ? 'selected' : 'visible';
   colSelect.innerHTML = editableCols.map((col) => `<option value="${esc(col.label)}">${esc(col.label)}</option>`).join('');
   modeSelect.value = 'replace';
   document.getElementById('batchFindValue').value = '';
   document.getElementById('batchReplaceValue').value = '';
-  document.getElementById('batchEditStatus').textContent = `Will apply to up to ${selectedCrmRecordIds.size} selected record(s).`;
+  const scopeCount = getBatchTargetRecords().length;
+  document.getElementById('batchEditStatus').textContent = `Will apply to ${scopeCount} record(s) in current scope.`;
   syncBatchEditModeUI();
-  if (editableCols.length > 0) renderBatchIndividualRows(editableCols[0]);
+  renderBatchIndividualRows(editableCols[0]);
   openModal('findReplaceModal');
 });
 
@@ -1474,6 +1569,15 @@ document.getElementById('batchEditMode').addEventListener('change', () => {
 document.getElementById('batchEditColumn').addEventListener('change', () => {
   const colLabel = document.getElementById('batchEditColumn').value;
   const column = getCrmColumns().find((c) => c.label === colLabel);
+  if (column) renderBatchIndividualRows(column);
+});
+
+document.getElementById('batchEditScope').addEventListener('change', () => {
+  const colLabel = document.getElementById('batchEditColumn').value;
+  const column = getCrmColumns().find((c) => c.label === colLabel);
+  const count = getBatchTargetRecords().length;
+  const statusEl = document.getElementById('batchEditStatus');
+  if (statusEl) statusEl.textContent = `Will apply to ${count} record(s) in current scope.`;
   if (column) renderBatchIndividualRows(column);
 });
 
@@ -1493,9 +1597,9 @@ document.getElementById('executeBatchEditBtn').addEventListener('click', async (
   const column = getCrmColumns().find((c) => c.label === colLabel);
   if (!column) { showToast('Column not found', 'error'); return; }
 
-  const targetRecords = getSelectedCrmRecords();
+  const targetRecords = getBatchTargetRecords();
   if (targetRecords.length === 0) {
-    statusEl.textContent = 'No selected records available.';
+    statusEl.textContent = 'No records available in current scope.';
     return;
   }
 

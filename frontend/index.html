@@ -309,6 +309,15 @@
     .crm-batch-bar { display:flex; align-items:center; gap:10px; padding:8px 0; flex-wrap:wrap; margin-bottom:12px; }
     .crm-check-th, .crm-check-cell { width:40px; text-align:center; padding:0 8px !important; }
     .crm-row-selected > td { background:#eff6ff !important; }
+    .crm-inline-editor {
+      width: 100%;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 5px 7px;
+      font-size: 12px;
+      background: #fff;
+      color: var(--text);
+    }
     .batch-individual-list { max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: grid; gap: 8px; }
     .batch-individual-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
     .batch-individual-row label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
@@ -442,7 +451,7 @@
       <div class="card mb-4">
         <div class="card-header"><h3>Search &amp; Filter</h3></div>
         <div class="card-body">
-          <div class="text-muted mb-4">Double-click a CRM table cell to edit and save it.</div>
+          <div class="text-muted mb-4">Click a CRM table cell to edit inline. Press Enter to save or Escape to cancel.</div>
           <div class="form-row cols3">
             <div class="form-group"><label>Township</label><input id="searchTwp" type="number" placeholder="Any" /></div>
             <div class="form-group"><label>Range</label><input id="searchRange" type="number" placeholder="Any" /></div>
@@ -826,6 +835,13 @@
           <option value="individual">Edit Individually</option>
         </select>
       </div>
+      <div class="form-group">
+        <label>Apply To</label>
+        <select id="batchEditScope">
+          <option value="selected">Selected Rows</option>
+          <option value="visible">All Visible Rows</option>
+        </select>
+      </div>
       <div id="batchReplaceSection">
         <div class="form-group">
           <label>Find (leave blank to update all selected)</label>
@@ -844,7 +860,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close="findReplaceModal">Cancel</button>
-      <button class="btn btn-primary" id="executeBatchEditBtn">Apply to Selected</button>
+      <button class="btn btn-primary" id="executeBatchEditBtn">Apply Changes</button>
     </div>
   </div>
 </div>
