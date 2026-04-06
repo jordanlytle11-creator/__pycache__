@@ -11,6 +11,8 @@ let workbookTabs = [];
 let currentCrmSearchParams = {};
 let currentCrmRecords = [];
 let currentCrmRawRecords = [];
+let crmSavedSnapshot = [];
+let pendingCrmEditsById = new Map();
 const DEFAULT_CRM_ROW_HEIGHT = 44;
 const crmLayoutStateByRole = {};
 const crmFilterStateByRole = {};
@@ -159,6 +161,50 @@ function getBatchTargetRecords() {
   const scope = document.getElementById('batchEditScope')?.value || 'selected';
   if (scope === 'visible') return currentCrmRecords;
   return getSelectedCrmRecords();
+}
+
+function deepCloneRecords(records) {
+  return JSON.parse(JSON.stringify(records || []));
+}
+
+function mergeCrmPayload(basePayload, incomingPayload) {
+  const merged = { ...(basePayload || {}) };
+  Object.entries(incomingPayload || {}).forEach(([key, value]) => {
+    if (key === 'extra_data') {
+      merged.extra_data = { ...(merged.extra_data || {}), ...(value || {}) };
+    } else {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
+function applyPayloadToRecord(record, payload) {
+  if (!record || !payload) return;
+  Object.entries(payload).forEach(([key, value]) => {
+    if (key === 'extra_data') {
+      record.extra_data = { ...(record.extra_data || {}), ...(value || {}) };
+    } else {
+      record[key] = value;
+    }
+  });
+}
+
+function stageCrmEdit(recordId, payload) {
+  const existing = pendingCrmEditsById.get(recordId) || {};
+  pendingCrmEditsById.set(recordId, mergeCrmPayload(existing, payload));
+  const record = currentCrmRawRecords.find((r) => r.id === recordId);
+  if (record) applyPayloadToRecord(record, payload);
+}
+
+function updateCrmPendingActionsUI() {
+  const saveBtn = document.getElementById('saveAllCrmChangesBtn');
+  const undoBtn = document.getElementById('undoCrmChangesBtn');
+  const label = document.getElementById('crmPendingChangesLabel');
+  const count = pendingCrmEditsById.size;
+  if (saveBtn) saveBtn.disabled = count === 0;
+  if (undoBtn) undoBtn.disabled = count === 0;
+  if (label) label.textContent = count === 0 ? 'No staged changes' : `${count} record${count === 1 ? '' : 's'} staged`;
 }
 
 function renderBatchIndividualRows(column) {
@@ -874,6 +920,8 @@ function bindCrmControls() {
   const slider = document.getElementById('crmRowHeight');
   const resetBtn = document.getElementById('resetCrmLayoutBtn');
   const clearFiltersBtn = document.getElementById('clearCrmFiltersBtn');
+  const saveAllBtn = document.getElementById('saveAllCrmChangesBtn');
+  const undoBtn = document.getElementById('undoCrmChangesBtn');
   if (slider && slider.dataset.bound !== '1') {
     slider.dataset.bound = '1';
     slider.addEventListener('input', () => {
@@ -894,6 +942,59 @@ function bindCrmControls() {
       renderCurrentCrmView();
     });
   }
+  if (saveAllBtn && saveAllBtn.dataset.bound !== '1') {
+    saveAllBtn.dataset.bound = '1';
+    saveAllBtn.addEventListener('click', async () => {
+      if (pendingCrmEditsById.size === 0) {
+        showToast('No staged changes to save', 'info');
+        return;
+      }
+
+      const entries = [...pendingCrmEditsById.entries()];
+      let successes = 0;
+      let failures = 0;
+      for (const [recordId, payload] of entries) {
+        try {
+          await apiJSON(`/crm/${recordId}`, {
+            method: 'PATCH',
+            headers: authHeaders(),
+            body: JSON.stringify(payload),
+          });
+          pendingCrmEditsById.delete(recordId);
+          successes++;
+        } catch {
+          failures++;
+        }
+      }
+
+      if (failures > 0) {
+        showToast(`Saved ${successes}, failed ${failures}. Reloaded from server.`, 'error');
+        await loadCRMRecords(currentCrmSearchParams);
+        await loadDashboard();
+        return;
+      }
+
+      crmSavedSnapshot = deepCloneRecords(currentCrmRawRecords);
+      updateCrmPendingActionsUI();
+      showToast(`Saved ${successes} staged change(s)`, 'success');
+      await loadDashboard();
+    });
+  }
+  if (undoBtn && undoBtn.dataset.bound !== '1') {
+    undoBtn.dataset.bound = '1';
+    undoBtn.addEventListener('click', () => {
+      if (pendingCrmEditsById.size === 0) {
+        showToast('No staged changes to undo', 'info');
+        return;
+      }
+      currentCrmRawRecords = deepCloneRecords(crmSavedSnapshot);
+      pendingCrmEditsById.clear();
+      updateCrmPendingActionsUI();
+      renderCurrentCrmView();
+      showToast('Reverted to last saved state', 'success');
+    });
+  }
+  updateCrmPendingActionsUI();
 }
 
 function getRecordValue(record, keys = []) {
@@ -1072,17 +1173,13 @@ async function editCrmCell(recordIndex, columnIndex) {
   }
 }
 
-async function saveCrmCellInline(record, column, value) {
+function saveCrmCellInline(record, column, value) {
   const payload = buildCrmUpdatePayload(column, value);
   if (!payload) return;
-  await apiJSON(`/crm/${record.id}`, {
-    method: 'PATCH',
-    headers: authHeaders(),
-    body: JSON.stringify(payload),
-  });
+  stageCrmEdit(record.id, payload);
 }
 
-async function applyInlineEditToSelectedRows(sourceRecord, column, value) {
+function applyInlineEditToSelectedRows(sourceRecord, column, value) {
   const targets = currentCrmRawRecords.filter(
     (record) => selectedCrmRecordIds.has(record.id) && record.id !== sourceRecord.id
   );
@@ -1092,20 +1189,11 @@ async function applyInlineEditToSelectedRows(sourceRecord, column, value) {
   if (!payload) return { updated: 0, failed: 0 };
 
   let updated = 0;
-  let failed = 0;
   for (const record of targets) {
-    try {
-      await apiJSON(`/crm/${record.id}`, {
-        method: 'PATCH',
-        headers: authHeaders(),
-        body: JSON.stringify(payload),
-      });
-      updated++;
-    } catch {
-      failed++;
-    }
+    stageCrmEdit(record.id, payload);
+    updated++;
   }
-  return { updated, failed };
+  return { updated, failed: 0 };
 }
 
 function startInlineCrmCellEdit(cell) {
@@ -1155,22 +1243,22 @@ function startInlineCrmCellEdit(cell) {
 
     input.disabled = true;
     try {
-      await saveCrmCellInline(record, column, nextValue);
+      saveCrmCellInline(record, column, nextValue);
       let cascadeResult = { updated: 0, failed: 0 };
       const shouldCascade = selectedCrmRecordIds.size > 1 && selectedCrmRecordIds.has(record.id);
       if (shouldCascade) {
-        cascadeResult = await applyInlineEditToSelectedRows(record, column, nextValue);
+        cascadeResult = applyInlineEditToSelectedRows(record, column, nextValue);
       }
       delete cell.dataset.editing;
       if (cascadeResult.updated || cascadeResult.failed) {
         const total = cascadeResult.updated + 1;
         const failureNote = cascadeResult.failed ? `, ${cascadeResult.failed} failed` : '';
-        showToast(`${column.label} updated on ${total} selected record(s)${failureNote}`, cascadeResult.failed ? 'error' : 'success');
+        showToast(`${column.label} staged on ${total} selected record(s)${failureNote}`, cascadeResult.failed ? 'error' : 'success');
       } else {
-        showToast(`${column.label} updated`, 'success');
+        showToast(`${column.label} staged`, 'success');
       }
-      await loadCRMRecords(currentCrmSearchParams);
-      await loadDashboard();
+      updateCrmPendingActionsUI();
+      renderCurrentCrmView();
     } catch (err) {
       delete cell.dataset.editing;
       cell.innerHTML = formatCrmCell(record, column);
@@ -1286,6 +1374,7 @@ function renderCurrentCrmView() {
   const columns = getCrmColumns();
   const filtered = applyCrmColumnFilters(currentCrmRawRecords, columns);
   renderCrmTable(filtered);
+  updateCrmPendingActionsUI();
 }
 
 // ── Workbook Ingestion + Cards ───────────────────────────────
@@ -1494,11 +1583,15 @@ async function loadCRMRecords(params) {
       currentCrmRawRecords = [];
     } else {
       currentCrmRawRecords = records;
+      crmSavedSnapshot = deepCloneRecords(records);
+      pendingCrmEditsById.clear();
     }
     renderCurrentCrmView();
   } catch (err) {
     showToast('Search failed: ' + err.message, 'error');
     currentCrmRawRecords = [];
+    crmSavedSnapshot = deepCloneRecords([]);
+    pendingCrmEditsById.clear();
     renderCurrentCrmView();
   }
 }
@@ -1729,25 +1822,25 @@ document.getElementById('executeBatchEditBtn').addEventListener('click', async (
       ? targetRecords.filter((r) => getCrmEditPromptValue(r, column).toLowerCase().includes(findTrimmed))
       : targetRecords;
     if (candidates.length === 0) { statusEl.textContent = 'No matching records found.'; return; }
-    statusEl.textContent = `Updating ${candidates.length} record(s)...`;
+    statusEl.textContent = `Staging ${candidates.length} record(s)...`;
 
     for (const record of candidates) {
       try {
-        await apiJSON(`/crm/${record.id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
+        stageCrmEdit(record.id, payload);
         successes++;
       } catch {
         failures++;
       }
     }
   } else {
-    statusEl.textContent = `Updating ${targetRecords.length} record(s) with individual values...`;
+    statusEl.textContent = `Staging ${targetRecords.length} record(s) with individual values...`;
     for (const record of targetRecords) {
       const inputEl = document.getElementById(`batchValue_${record.id}`);
       if (!inputEl) continue;
       try {
         const payload = buildCrmUpdatePayload(column, inputEl.value);
         if (!payload) continue;
-        await apiJSON(`/crm/${record.id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
+        stageCrmEdit(record.id, payload);
         successes++;
       } catch {
         failures++;
@@ -1756,11 +1849,10 @@ document.getElementById('executeBatchEditBtn').addEventListener('click', async (
   }
 
   closeModal('findReplaceModal');
-  showToast(failures > 0 ? `Updated ${successes}, failed ${failures}` : `Updated ${successes} record(s)`, failures > 0 ? 'error' : 'success');
+  showToast(failures > 0 ? `Staged ${successes}, failed ${failures}` : `Staged ${successes} record(s)`, failures > 0 ? 'error' : 'success');
   selectedCrmRecordIds.clear();
   updateCrmBatchBar();
-  await loadCRMRecords(currentCrmSearchParams);
-  await loadDashboard();
+  renderCurrentCrmView();
 });
 
 // ── Users ──────────────────────────────────────────────────────
