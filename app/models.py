@@ -17,6 +17,8 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_manager = Column(Boolean, default=False)
     is_admin = Column(Boolean, default=False)
+    project_scope = Column(String(20), default='all', nullable=False)
+    project_assignments_json = Column(Text, default='[]', nullable=False)
     role_id = Column(Integer, ForeignKey('roles.id'), nullable=True)
     role = relationship('Role')
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from pydantic import BaseModel, validator, EmailStr
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import re
 from email_validator import validate_email, EmailNotValidError
 
@@ -99,6 +99,8 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: Optional[str] = 'employee'
+    project_scope: Optional[str] = 'all'
+    assigned_projects: List[str] = []
 
     @validator('email')
     def validate_email_format(cls, v):
@@ -108,6 +110,20 @@ class UserCreate(BaseModel):
         except EmailNotValidError as e:
             raise ValueError(f'Invalid email: {str(e)}')
 
+    @validator('project_scope')
+    def validate_project_scope(cls, v):
+        value = (v or 'all').strip().lower()
+        if value not in {'all', 'single', 'multiple'}:
+            raise ValueError('project_scope must be all, single, or multiple')
+        return value
+
+    @validator('assigned_projects', pre=True, always=True)
+    def normalize_assigned_projects(cls, v):
+        if v is None:
+            return []
+        values = [str(item).strip().lower() for item in v if str(item).strip()]
+        return list(dict.fromkeys(values))
+
 class UserRead(BaseModel):
     id: int
     email: EmailStr
@@ -115,6 +131,8 @@ class UserRead(BaseModel):
     is_manager: bool
     is_admin: bool
     role: Optional[str]
+    project_scope: str = 'all'
+    assigned_projects: List[str] = []
 
     class Config:
         orm_mode = True
@@ -122,12 +140,30 @@ class UserRead(BaseModel):
 class UserUpdate(BaseModel):
     role: Optional[str] = None
     password: Optional[str] = None
+    project_scope: Optional[str] = None
+    assigned_projects: Optional[List[str]] = None
 
     @validator('role')
     def role_enum(cls, v):
         if v is not None and v not in {'admin', 'manager', 'employee'}:
             raise ValueError('role must be admin, manager, or employee')
         return v
+
+    @validator('project_scope')
+    def update_project_scope(cls, v):
+        if v is None:
+            return v
+        value = v.strip().lower()
+        if value not in {'all', 'single', 'multiple'}:
+            raise ValueError('project_scope must be all, single, or multiple')
+        return value
+
+    @validator('assigned_projects', pre=True)
+    def update_assigned_projects(cls, v):
+        if v is None:
+            return v
+        values = [str(item).strip().lower() for item in v if str(item).strip()]
+        return list(dict.fromkeys(values))
 
 class InviteCreate(BaseModel):
     email: EmailStr

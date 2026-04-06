@@ -76,6 +76,23 @@ def _migrate_crm_columns():
 _migrate_crm_columns()
 
 
+def _migrate_user_columns():
+    inspector = sa_inspect(engine)
+    existing_cols = {c['name'] for c in inspector.get_columns('users')}
+    new_cols = [
+        ('project_scope', "VARCHAR(20) NOT NULL DEFAULT 'all'"),
+        ('project_assignments_json', "TEXT NOT NULL DEFAULT '[]'"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_type in new_cols:
+            if col_name not in existing_cols:
+                conn.execute(text(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}'))
+        conn.commit()
+
+
+_migrate_user_columns()
+
+
 def _normalize_existing_acres_nulls():
     # Keep acreage fields numeric for downstream UI calculations.
     with engine.connect() as conn:
@@ -165,7 +182,7 @@ def _record_values_for_project(record: CrmRecord) -> list[str]:
 def _detect_project_key(record: CrmRecord) -> Optional[str]:
     extra = dict(record.extra_data or {})
     explicit = _normalize_text_token(extra.get(PROJECT_NORMALIZED_KEY))
-    if explicit in {'tomahawk', 'romulus'}:
+    if explicit:
         return explicit
 
     project_values = _record_values_for_project(record)
@@ -183,9 +200,58 @@ def _project_key_from_query(project: Optional[str]) -> Optional[str]:
     value = str(project).strip().lower()
     if not value:
         return None
-    if value not in {'tomahawk', 'romulus'}:
-        raise HTTPException(status_code=400, detail='project must be tomahawk or romulus')
     return value
+
+
+def _user_assigned_projects(user: User) -> list[str]:
+    raw = getattr(user, 'project_assignments_json', '[]') or '[]'
+    try:
+        values = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    except json.JSONDecodeError:
+        values = []
+    normalized = [str(item).strip().lower() for item in values if str(item).strip()]
+    return list(dict.fromkeys(normalized))
+
+
+def _normalize_user_project_access(scope: Optional[str], projects: Optional[list[str]]) -> tuple[str, list[str]]:
+    normalized_scope = (scope or 'all').strip().lower()
+    if normalized_scope not in {'all', 'single', 'multiple'}:
+        raise HTTPException(status_code=400, detail='project_scope must be all, single, or multiple')
+
+    normalized_projects = list(dict.fromkeys([
+        str(item).strip().lower()
+        for item in (projects or [])
+        if str(item).strip()
+    ]))
+
+    if normalized_scope == 'all':
+        return 'all', []
+    if normalized_scope == 'single':
+        if len(normalized_projects) != 1:
+            raise HTTPException(status_code=400, detail='single project scope requires exactly one assigned project')
+        return 'single', normalized_projects[:1]
+    if not normalized_projects:
+        raise HTTPException(status_code=400, detail='multiple project scope requires at least one assigned project')
+    return 'multiple', normalized_projects
+
+
+def _filter_records_for_user_project_scope(records: list[CrmRecord], user: User) -> list[CrmRecord]:
+    if user.is_admin:
+        return records
+
+    scope = (getattr(user, 'project_scope', 'all') or 'all').strip().lower()
+    assigned_projects = set(_user_assigned_projects(user))
+    if scope == 'all':
+        return records
+    if not assigned_projects:
+        return []
+
+    scoped_records = []
+    for record in records:
+        project_key = _detect_project_key(record)
+        if project_key and project_key.lower() in assigned_projects:
+            scoped_records.append(record)
+    return scoped_records
 
 
 def _set_normalized_project(record: CrmRecord, forced_project: Optional[str] = None) -> Optional[str]:
@@ -348,6 +414,19 @@ def _summarize_dashboard_records(records: list[CrmRecord], role: str) -> Dashboa
         scope_record_count=len(records),
         project_summaries=project_summaries,
         master_summary=master_summary,
+    )
+
+
+def _user_to_read(user: User) -> UserRead:
+    return UserRead(
+        id=user.id,
+        email=user.email,
+        is_active=user.is_active,
+        is_manager=user.is_manager,
+        is_admin=user.is_admin,
+        role='admin' if user.is_admin else ('manager' if user.is_manager else 'employee'),
+        project_scope=(getattr(user, 'project_scope', 'all') or 'all'),
+        assigned_projects=_user_assigned_projects(user),
     )
 
 app = FastAPI(title='Local ERP/CRM MVP')
@@ -1184,7 +1263,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     if not user:
         raise HTTPException(status_code=400, detail='Incorrect username or password')
     role = 'admin' if user.is_admin else ('manager' if user.is_manager else 'employee')
-    access_token = create_access_token(data={'sub': user.email, 'role': role})
+    access_token = create_access_token(data={'sub': user.email, 'role': role, 'project_scope': getattr(user, 'project_scope', 'all'), 'assigned_projects': _user_assigned_projects(user)})
     return {'access_token': access_token, 'token_type': 'bearer'}
 
 
@@ -1192,28 +1271,26 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 def create_user(user_in: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if get_user_by_email(db, user_in.email):
         raise HTTPException(status_code=400, detail='Email already registered')
+    project_scope, assigned_projects = _normalize_user_project_access(user_in.project_scope, user_in.assigned_projects)
     hashed = get_password_hash(user_in.password)
-    user = User(email=user_in.email, hashed_password=hashed, is_admin=(user_in.role == 'admin'), is_manager=(user_in.role == 'manager'))
+    user = User(
+        email=user_in.email,
+        hashed_password=hashed,
+        is_admin=(user_in.role == 'admin'),
+        is_manager=(user_in.role == 'manager'),
+        project_scope='all' if user_in.role == 'admin' else project_scope,
+        project_assignments_json='[]' if user_in.role == 'admin' else json.dumps(assigned_projects),
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+    return _user_to_read(user)
 
 
 @app.get('/admin/users', response_model=List[UserRead])
 def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     users = db.query(User).all()
-    return [
-        UserRead(
-            id=user.id,
-            email=user.email,
-            is_active=user.is_active,
-            is_manager=user.is_manager,
-            is_admin=user.is_admin,
-            role='admin' if user.is_admin else ('manager' if user.is_manager else 'employee'),
-        )
-        for user in users
-    ]
+    return [_user_to_read(user) for user in users]
 
 
 @app.patch('/admin/users/{user_id}', response_model=UserRead)
@@ -1224,20 +1301,22 @@ def update_user(user_id: int, update: UserUpdate, db: Session = Depends(get_db),
     if update.role is not None:
         user.is_admin = update.role == 'admin'
         user.is_manager = update.role == 'manager'
+    next_scope = update.project_scope if update.project_scope is not None else getattr(user, 'project_scope', 'all')
+    next_projects = update.assigned_projects if update.assigned_projects is not None else _user_assigned_projects(user)
+    project_scope, assigned_projects = _normalize_user_project_access(next_scope, next_projects)
+    if user.is_admin:
+        user.project_scope = 'all'
+        user.project_assignments_json = '[]'
+    else:
+        user.project_scope = project_scope
+        user.project_assignments_json = json.dumps(assigned_projects)
     if update.password is not None:
         if len(update.password) < 8:
             raise HTTPException(status_code=400, detail='Password must be at least 8 characters')
         user.hashed_password = get_password_hash(update.password)
     db.commit()
     db.refresh(user)
-    return UserRead(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        is_manager=user.is_manager,
-        is_admin=user.is_admin,
-        role='admin' if user.is_admin else ('manager' if user.is_manager else 'employee'),
-    )
+    return _user_to_read(user)
 
 
 @app.post('/admin/invite')
@@ -1655,7 +1734,7 @@ def list_records(skip: int = 0, limit: int = 5000, project: Optional[str] = None
     project_key = _project_key_from_query(project)
     query = _records_query_for_user(db, user)
     records = query.all()
-    scoped = _filter_records_by_project(records, project_key)
+    scoped = _filter_records_by_project(_filter_records_for_user_project_scope(records, user), project_key)
     return scoped[skip:skip + safe_limit]
 
 
@@ -1695,7 +1774,7 @@ def search_records(
         q = q.filter(CrmRecord.status == status)
     records = q.all()
     project_key = _project_key_from_query(project)
-    scoped = _filter_records_by_project(records, project_key)
+    scoped = _filter_records_by_project(_filter_records_for_user_project_scope(records, user), project_key)
     safe_limit = max(1, min(limit, 300000))
     return scoped[:safe_limit]
 
@@ -1784,7 +1863,7 @@ def dashboard_summary(db: Session = Depends(get_db), user: User = Depends(get_cu
     elif user.is_manager:
         role = 'manager'
 
-    records = _records_query_for_user(db, user).limit(300000).all()
+    records = _filter_records_for_user_project_scope(_records_query_for_user(db, user).limit(300000).all(), user)
     return _summarize_dashboard_records(records, role)
 
 

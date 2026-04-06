@@ -134,6 +134,38 @@ function detectProjectFromRecord(record) {
   return '';
 }
 
+function renderUserProjectOptions(selectEl, selectedProjects = []) {
+  if (!selectEl) return;
+  const selected = new Set((selectedProjects || []).map((item) => String(item).toLowerCase()));
+  selectEl.innerHTML = getAllProjects().map((project) => `<option value="${esc(project.key)}" ${selected.has(project.key) ? 'selected' : ''}>${esc(project.name)}</option>`).join('');
+}
+
+function syncUserProjectScopeUI(prefix) {
+  const roleEl = document.getElementById(prefix === 'edit' ? 'editUserRole' : 'newRole');
+  const scopeEl = document.getElementById(prefix === 'edit' ? 'editUserProjectScope' : 'newUserProjectScope');
+  const wrapEl = document.getElementById(prefix === 'edit' ? 'editUserProjectsWrap' : 'newUserProjectsWrap');
+  const projectsEl = document.getElementById(prefix === 'edit' ? 'editUserProjects' : 'newUserProjects');
+  if (!roleEl || !scopeEl || !wrapEl || !projectsEl) return;
+
+  const isAdmin = roleEl.value === 'admin';
+  wrapEl.style.display = isAdmin || scopeEl.value === 'all' ? 'none' : '';
+  projectsEl.disabled = isAdmin || scopeEl.value === 'all';
+}
+
+function getSelectedProjectValues(selectEl, scope) {
+  if (!selectEl || scope === 'all') return [];
+  const values = [...selectEl.selectedOptions].map((opt) => opt.value).filter(Boolean);
+  if (scope === 'single') return values.slice(0, 1);
+  return values;
+}
+
+function formatUserProjectAccess(user) {
+  if (!user || user.role === 'admin' || user.project_scope === 'all') return 'All Projects';
+  const projects = (user.assigned_projects || []).map((key) => getProjectName(key) || key);
+  if (user.project_scope === 'single') return projects[0] || 'Single Project';
+  return projects.length ? projects.join(', ') : 'No Projects Assigned';
+}
+
 function updateProjectSearchDropdown() {
   const select = document.getElementById('searchProject');
   if (!select) return;
@@ -1931,16 +1963,18 @@ document.getElementById('executeBatchEditBtn').addEventListener('click', async (
 async function loadUsers() {
   try {
     const users = await apiJSON('/admin/users', { headers: authHeaders() });
+    window.__userAdminCache = Object.fromEntries(users.map((user) => [String(user.id), user]));
     const tbody = document.getElementById('usersTbody');
     if (!users.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="3">No users found</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No users found</td></tr>';
     } else {
       tbody.innerHTML = users.map(u => `
         <tr>
           <td>${esc(u.email)}</td>
           <td>${roleBadge(u.role)}</td>
+          <td>${esc(formatUserProjectAccess(u))}</td>
           <td>
-            <button class="btn btn-ghost btn-sm" onclick="openEditUser(${u.id}, '${esc(u.email)}', '${esc(u.role)}')">Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="openEditUserById(${u.id})">Edit</button>
           </td>
         </tr>`).join('');
     }
@@ -1949,19 +1983,34 @@ async function loadUsers() {
   }
 }
 
-function openEditUser(id, email, role) {
-  document.getElementById('editUserId').value = id;
-  document.getElementById('editUserEmail').value = email;
-  document.getElementById('editUserRole').value = role;
+function openEditUserById(userId) {
+  const user = (window.__userAdminCache || {})[String(userId)];
+  if (!user) {
+    showToast('Could not load user details', 'error');
+    return;
+  }
+  document.getElementById('editUserId').value = user.id;
+  document.getElementById('editUserEmail').value = user.email;
+  document.getElementById('editUserRole').value = user.role;
+  document.getElementById('editUserProjectScope').value = user.project_scope || 'all';
+  renderUserProjectOptions(document.getElementById('editUserProjects'), user.assigned_projects || []);
+  syncUserProjectScopeUI('edit');
   document.getElementById('editUserPassword').value = '';
   openModal('editUserModal');
 }
 
+document.getElementById('editUserRole').addEventListener('change', () => syncUserProjectScopeUI('edit'));
+document.getElementById('editUserProjectScope').addEventListener('change', () => syncUserProjectScopeUI('edit'));
+document.getElementById('newRole').addEventListener('change', () => syncUserProjectScopeUI('new'));
+document.getElementById('newUserProjectScope').addEventListener('change', () => syncUserProjectScopeUI('new'));
+
 document.getElementById('saveEditUserBtn').addEventListener('click', async () => {
   const id = document.getElementById('editUserId').value;
   const role = document.getElementById('editUserRole').value;
+  const projectScope = document.getElementById('editUserProjectScope').value;
+  const assignedProjects = getSelectedProjectValues(document.getElementById('editUserProjects'), projectScope);
   const password = document.getElementById('editUserPassword').value;
-  const body = { role };
+  const body = { role, project_scope: projectScope, assigned_projects: assignedProjects };
   if (password) body.password = password;
   try {
     await apiJSON(`/admin/users/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body) });
@@ -1973,13 +2022,23 @@ document.getElementById('saveEditUserBtn').addEventListener('click', async () =>
   }
 });
 
-document.getElementById('openCreateUserModal').addEventListener('click', () => openModal('createUserModal'));
+document.getElementById('openCreateUserModal').addEventListener('click', () => {
+  document.getElementById('newEmail').value = '';
+  document.getElementById('newPass').value = '';
+  document.getElementById('newRole').value = 'employee';
+  document.getElementById('newUserProjectScope').value = 'all';
+  renderUserProjectOptions(document.getElementById('newUserProjects'));
+  syncUserProjectScopeUI('new');
+  openModal('createUserModal');
+});
 
 document.getElementById('createUserBtn').addEventListener('click', async () => {
   const body = {
     email: document.getElementById('newEmail').value.trim(),
     password: document.getElementById('newPass').value,
     role: document.getElementById('newRole').value,
+    project_scope: document.getElementById('newUserProjectScope').value,
+    assigned_projects: getSelectedProjectValues(document.getElementById('newUserProjects'), document.getElementById('newUserProjectScope').value),
   };
   if (!body.email || !body.password) { showToast('Email and password are required', 'error'); return; }
   try {
@@ -1991,6 +2050,11 @@ document.getElementById('createUserBtn').addEventListener('click', async () => {
     showToast('Failed: ' + err.message, 'error');
   }
 });
+
+renderUserProjectOptions(document.getElementById('newUserProjects'));
+renderUserProjectOptions(document.getElementById('editUserProjects'));
+syncUserProjectScopeUI('new');
+syncUserProjectScopeUI('edit');
 
 // ── Invites ────────────────────────────────────────────────────
 document.getElementById('inviteBtn').addEventListener('click', async () => {
