@@ -14,6 +14,34 @@ let currentCrmRawRecords = [];
 const DEFAULT_CRM_ROW_HEIGHT = 44;
 const crmLayoutStateByRole = {};
 const crmFilterStateByRole = {};
+let selectedCrmRecordIds = new Set();
+let customProjects = [];
+
+function loadCustomProjects() {
+  try {
+    const stored = localStorage.getItem('erp_custom_projects');
+    customProjects = stored ? JSON.parse(stored) : [];
+  } catch { customProjects = []; }
+}
+
+function saveCustomProjects() {
+  localStorage.setItem('erp_custom_projects', JSON.stringify(customProjects));
+}
+
+function getAllProjects() {
+  return [
+    { key: 'tomahawk', name: 'Tomahawk' },
+    { key: 'romulus', name: 'Romulus' },
+    ...customProjects,
+  ];
+}
+
+function getProjectName(key) {
+  const k = String(key || '').toLowerCase().trim();
+  if (!k) return '';
+  const found = getAllProjects().find((p) => p.key === k || p.name.toLowerCase() === k);
+  return found ? found.name : key;
+}
 
 // ── Toast ─────────────────────────────────────────────────────
 function showToast(msg, type = 'info', duration = 3500) {
@@ -62,10 +90,11 @@ function roleBadge(role) {
 }
 
 function projectBadge(projectKey) {
-  const value = (projectKey || '').toLowerCase();
+  const value = (projectKey || '').toLowerCase().trim();
+  if (!value || value === 'unassigned') return '<span class="badge badge-employee">Unassigned</span>';
   if (value === 'tomahawk') return '<span class="badge badge-progress">Tomahawk</span>';
   if (value === 'romulus') return '<span class="badge badge-admin">Romulus</span>';
-  return '<span class="badge badge-employee">Unassigned</span>';
+  return `<span class="badge badge-manager">${esc(getProjectName(value))}</span>`;
 }
 
 function detectProjectFromRecord(record) {
@@ -95,6 +124,26 @@ function detectProjectFromRecord(record) {
   if (candidates.some((v) => v.includes('romulus'))) return 'romulus';
   if (candidates.some((v) => v.includes('tomahawk'))) return 'tomahawk';
   return '';
+}
+
+function updateProjectSearchDropdown() {
+  const select = document.getElementById('searchProject');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = `<option value="">All projects</option>` +
+    getAllProjects().map((p) => `<option value="${esc(p.key)}"${current === p.key ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+}
+
+function updateCrmBatchBar() {
+  const bar = document.getElementById('crmBatchBar');
+  const countEl = document.getElementById('crmSelectionCount');
+  if (!bar) return;
+  if (selectedCrmRecordIds.size > 0) {
+    bar.style.display = 'flex';
+    if (countEl) countEl.textContent = `${selectedCrmRecordIds.size} record${selectedCrmRecordIds.size === 1 ? '' : 's'} selected`;
+  } else {
+    bar.style.display = 'none';
+  }
 }
 
 function fmtDate(d) {
@@ -165,6 +214,8 @@ function showApp() {
     loadWorkbookStorageStatus();
   }
 
+  loadCustomProjects();
+  updateProjectSearchDropdown();
   navigateTo('dashboard');
 }
 
@@ -644,8 +695,8 @@ function renderCrmFilterControl(column) {
   }
 
   if (filterType === 'project') {
-    const options = ['tomahawk', 'romulus', 'unassigned'];
-    return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${options.map((opt) => `<option value="${esc(opt)}" ${filter.value === opt ? 'selected' : ''}>${esc(opt.charAt(0).toUpperCase() + opt.slice(1))}</option>`).join('')}</select>`;
+    const projectOptions = [...getAllProjects(), { key: 'unassigned', name: 'Unassigned' }];
+    return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${projectOptions.map((p) => `<option value="${esc(p.key)}" ${filter.value === p.key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
   }
 
   if (filterType === 'number') {
@@ -869,16 +920,20 @@ function buildCrmUpdatePayload(column, value) {
   }
 
   if (editor.type === 'project') {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized && !['tomahawk', 'romulus', 'unassigned', 'none'].includes(normalized)) {
-      throw new Error('Project must be Tomahawk, Romulus, or blank');
+    const inputRaw = String(value || '').trim();
+    const inputLower = inputRaw.toLowerCase();
+    const isUnassigned = !inputLower || ['unassigned', 'none', 'blank', '\u2014', '-'].includes(inputLower);
+    if (isUnassigned) {
+      return { extra_data: { project_normalized: null, project: null, project_name: null } };
     }
-    const projectValue = ['unassigned', 'none'].includes(normalized) ? null : (normalized || null);
+    const matched = getAllProjects().find((p) => p.key === inputLower || p.name.toLowerCase() === inputLower);
+    const projectKey = matched ? matched.key : inputLower.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    const projectName = matched ? matched.name : inputRaw;
     return {
       extra_data: {
-        project_normalized: projectValue,
-        project: projectValue,
-        project_name: projectValue,
+        project_normalized: projectKey,
+        project: projectKey,
+        project_name: projectName,
       },
     };
   }
@@ -905,7 +960,11 @@ async function editCrmCell(recordIndex, columnIndex) {
   if (!record || !column || !editor) return;
 
   const currentValue = getCrmEditPromptValue(record, column);
-  const nextValue = window.prompt(`Edit ${column.label}`, currentValue);
+  let promptLabel = `Edit ${column.label}`;
+  if (editor.type === 'project') {
+    promptLabel += ` (${getAllProjects().map((p) => p.name).join(', ')})`;
+  }
+  const nextValue = window.prompt(promptLabel, currentValue);
   if (nextValue === null || nextValue === currentValue) return;
 
   try {
@@ -932,6 +991,32 @@ function bindCrmEditableCells() {
   });
 }
 
+function bindCrmRowCheckboxes() {
+  const selectAll = document.getElementById('selectAllCrmRows');
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.crm-row-check').forEach((cb) => {
+        cb.checked = selectAll.checked;
+        const id = parseInt(cb.dataset.recordId, 10);
+        if (selectAll.checked) selectedCrmRecordIds.add(id);
+        else selectedCrmRecordIds.delete(id);
+      });
+      updateCrmBatchBar();
+    });
+  }
+  document.querySelectorAll('.crm-row-check').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const id = parseInt(cb.dataset.recordId, 10);
+      if (cb.checked) selectedCrmRecordIds.add(id);
+      else selectedCrmRecordIds.delete(id);
+      updateCrmBatchBar();
+      const allCbs = document.querySelectorAll('.crm-row-check');
+      const sa = document.getElementById('selectAllCrmRows');
+      if (sa) sa.checked = allCbs.length > 0 && [...allCbs].every((c) => c.checked);
+    });
+  });
+}
+
 function renderCrmTable(records) {
   const columns = getCrmColumns();
   const colgroup = document.getElementById('crmColgroup');
@@ -939,10 +1024,12 @@ function renderCrmTable(records) {
   const tbody = document.getElementById('crmTbody');
   currentCrmRecords = records;
 
-  colgroup.innerHTML = columns.map((column) => `<col data-column-label="${esc(column.label)}" style="width:${getColumnWidth(column)}px;" />`).join('');
+  const allChecked = currentCrmRecords.length > 0 && currentCrmRecords.every((r) => selectedCrmRecordIds.has(r.id));
+  colgroup.innerHTML = `<col style="width:40px;" />` + columns.map((column) => `<col data-column-label="${esc(column.label)}" style="width:${getColumnWidth(column)}px;" />`).join('');
 
   thead.innerHTML = `
     <tr>
+      <th class="crm-check-th"><input type="checkbox" id="selectAllCrmRows" ${allChecked && currentCrmRecords.length > 0 ? 'checked' : ''} /></th>
       ${columns.map((column) => `
         <th class="crm-col-header" draggable="true" data-column-label="${esc(column.label)}">
           <div class="crm-header-cell">
@@ -954,12 +1041,14 @@ function renderCrmTable(records) {
       `).join('')}
     </tr>
     <tr class="crm-filter-row">
+      <th></th>
       ${columns.map((column) => `<th>${renderCrmFilterControl(column)}</th>`).join('')}
     </tr>
   `;
 
   if (records.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="${columns.length}">No records found</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="${columns.length + 1}">No records found</td></tr>`;
+    bindCrmRowCheckboxes();
     bindCrmHeaderInteractions();
     bindCrmFilterInputs();
     applyCrmRowHeight();
@@ -969,10 +1058,12 @@ function renderCrmTable(records) {
   }
 
   tbody.innerHTML = records.map((record, recordIndex) => `
-    <tr>
+    <tr class="${selectedCrmRecordIds.has(record.id) ? 'crm-row-selected' : ''}">
+      <td class="crm-check-cell"><input type="checkbox" class="crm-row-check" data-record-id="${record.id}" ${selectedCrmRecordIds.has(record.id) ? 'checked' : ''} /></td>
       ${columns.map((column, columnIndex) => `<td class="${getCrmColumnEditor(column) ? 'crm-editable' : ''}" data-record-index="${recordIndex}" data-column-index="${columnIndex}">${formatCrmCell(record, column)}</td>`).join('')}
     </tr>`).join('');
 
+  bindCrmRowCheckboxes();
   bindCrmEditableCells();
   bindCrmHeaderInteractions();
   bindCrmFilterInputs();
@@ -1291,6 +1382,85 @@ document.getElementById('shareBtn').addEventListener('click', async () => {
     outEl.style.display = 'block';
     showToast('Export failed: ' + err.message, 'error');
   }
+});
+
+// ── Add Project ────────────────────────────────────────────────
+document.getElementById('addProjectBtn').addEventListener('click', () => {
+  document.getElementById('newProjectName').value = '';
+  openModal('addProjectModal');
+});
+
+document.getElementById('saveNewProjectBtn').addEventListener('click', () => {
+  const name = document.getElementById('newProjectName').value.trim();
+  if (!name) { showToast('Enter a project name', 'error'); return; }
+  const key = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  if (!key) { showToast('Invalid project name', 'error'); return; }
+  if (getAllProjects().some((p) => p.key === key)) {
+    showToast(`Project "${name}" already exists`, 'error');
+    return;
+  }
+  customProjects.push({ key, name });
+  saveCustomProjects();
+  closeModal('addProjectModal');
+  showToast(`Project "${name}" added`, 'success');
+  updateProjectSearchDropdown();
+});
+
+// ── Batch Find & Replace ───────────────────────────────────────
+document.getElementById('batchEditBtn').addEventListener('click', () => {
+  if (selectedCrmRecordIds.size === 0) { showToast('Select records first', 'error'); return; }
+  const colSelect = document.getElementById('batchEditColumn');
+  const editableCols = getCrmColumns().filter((col) => getCrmColumnEditor(col));
+  colSelect.innerHTML = editableCols.map((col) => `<option value="${esc(col.label)}">${esc(col.label)}</option>`).join('');
+  document.getElementById('batchFindValue').value = '';
+  document.getElementById('batchReplaceValue').value = '';
+  document.getElementById('batchEditStatus').textContent = `Will apply to up to ${selectedCrmRecordIds.size} selected record(s).`;
+  openModal('findReplaceModal');
+});
+
+document.getElementById('clearSelectionBtn').addEventListener('click', () => {
+  selectedCrmRecordIds.clear();
+  updateCrmBatchBar();
+  renderCurrentCrmView();
+});
+
+document.getElementById('executeBatchEditBtn').addEventListener('click', async () => {
+  const colLabel = document.getElementById('batchEditColumn').value;
+  const findValue = document.getElementById('batchFindValue').value;
+  const replaceValue = document.getElementById('batchReplaceValue').value;
+  const statusEl = document.getElementById('batchEditStatus');
+  if (!colLabel) { showToast('Select a column', 'error'); return; }
+  const column = getCrmColumns().find((c) => c.label === colLabel);
+  if (!column) { showToast('Column not found', 'error'); return; }
+  let payload;
+  try {
+    payload = buildCrmUpdatePayload(column, replaceValue);
+  } catch (err) {
+    showToast('Invalid value: ' + err.message, 'error');
+    return;
+  }
+  if (!payload) { showToast('No payload generated', 'error'); return; }
+  const targetRecords = currentCrmRawRecords.filter((r) => selectedCrmRecordIds.has(r.id));
+  const findTrimmed = findValue.trim().toLowerCase();
+  const candidates = findTrimmed
+    ? targetRecords.filter((r) => getCrmEditPromptValue(r, column).toLowerCase().includes(findTrimmed))
+    : targetRecords;
+  if (candidates.length === 0) { statusEl.textContent = 'No matching records found.'; return; }
+  statusEl.textContent = `Updating ${candidates.length} record(s)...`;
+  let successes = 0;
+  let failures = 0;
+  for (const record of candidates) {
+    try {
+      await apiJSON(`/crm/${record.id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
+      successes++;
+    } catch { failures++; }
+  }
+  closeModal('findReplaceModal');
+  showToast(failures > 0 ? `Updated ${successes}, failed ${failures}` : `Updated ${successes} record(s)`, failures > 0 ? 'error' : 'success');
+  selectedCrmRecordIds.clear();
+  updateCrmBatchBar();
+  await loadCRMRecords(currentCrmSearchParams);
+  await loadDashboard();
 });
 
 // ── Users ──────────────────────────────────────────────────────

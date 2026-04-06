@@ -306,6 +306,9 @@
     .dashboard-project-panels { display: grid; gap: 14px; margin-top: 18px; }
     .dashboard-project-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     .dashboard-mini-kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 14px; }
+    .crm-batch-bar { display:flex; align-items:center; gap:10px; padding:8px 0; flex-wrap:wrap; margin-bottom:12px; }
+    .crm-check-th, .crm-check-cell { width:40px; text-align:center; padding:0 8px !important; }
+    .crm-row-selected > td { background:#eff6ff !important; }
   </style>
 </head>
 <body>
@@ -428,7 +431,10 @@
     <div id="page-crm" class="page">
       <div class="flex justify-between items-center mb-4">
         <div class="section-title" style="margin:0">CRM Records</div>
-        <button class="btn btn-primary" id="crmAddBtn">+ New Record</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost btn-sm" id="addProjectBtn">+ New Project</button>
+          <button class="btn btn-primary" id="crmAddBtn">+ New Record</button>
+        </div>
       </div>
       <div class="card mb-4">
         <div class="card-header"><h3>Search &amp; Filter</h3></div>
@@ -460,8 +466,6 @@
               <label>Project</label>
               <select id="searchProject">
                 <option value="">All projects</option>
-                <option value="tomahawk">Tomahawk</option>
-                <option value="romulus">Romulus</option>
               </select>
             </div>
             <div class="text-muted" style="padding-bottom:8px;">Project filtering and project badges are now available in CRM results.</div>
@@ -775,6 +779,104 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" data-close="forgotCredsModal">Cancel</button>
       <button class="btn btn-primary" id="submitForgotCredsBtn">Submit Request</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Add Project -->
+<div class="modal-overlay" id="addProjectModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Add New Project</h3>
+      <button class="close-btn" data-close="addProjectModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Project Name</label>
+        <input id="newProjectName" placeholder="e.g. Viper, Phoenix" autocomplete="off" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="addProjectModal">Cancel</button>
+      <button class="btn btn-primary" id="saveNewProjectBtn">Add Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Batch Find & Replace -->
+<div class="modal-overlay" id="findReplaceModal">
+  <div class="modal" style="width:520px;max-width:98vw;">
+    <div class="modal-header">
+      <h3>Batch Edit — Find &amp; Replace</h3>
+      <button class="close-btn" data-close="findReplaceModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Column to Edit</label>
+        <select id="batchEditColumn"></select>
+      </div>
+      <div class="form-group">
+        <label>Find (leave blank to update all selected)</label>
+        <input id="batchFindValue" placeholder="Match current cell value (optional)" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Replace With</label>
+        <input id="batchReplaceValue" placeholder="New value" autocomplete="off" />
+      </div>
+      <div id="batchEditStatus" class="text-muted"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="findReplaceModal">Cancel</button>
+      <button class="btn btn-primary" id="executeBatchEditBtn">Apply to Selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Add Project -->
+<div class="modal-overlay" id="addProjectModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Add New Project</h3>
+      <button class="close-btn" data-close="addProjectModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Project Name</label>
+        <input id="newProjectName" placeholder="e.g. Viper, Phoenix" autocomplete="off" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="addProjectModal">Cancel</button>
+      <button class="btn btn-primary" id="saveNewProjectBtn">Add Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Batch Find & Replace -->
+<div class="modal-overlay" id="findReplaceModal">
+  <div class="modal" style="width:520px;max-width:98vw;">
+    <div class="modal-header">
+      <h3>Batch Edit &#8212; Find &amp; Replace</h3>
+      <button class="close-btn" data-close="findReplaceModal">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Column to Edit</label>
+        <select id="batchEditColumn"></select>
+      </div>
+      <div class="form-group">
+        <label>Find (leave blank to update all selected)</label>
+        <input id="batchFindValue" placeholder="Match current cell value (optional)" autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>Replace With</label>
+        <input id="batchReplaceValue" placeholder="New value" autocomplete="off" />
+      </div>
+      <div id="batchEditStatus" class="text-muted"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="findReplaceModal">Cancel</button>
+      <button class="btn btn-primary" id="executeBatchEditBtn">Apply to Selected</button>
     </div>
   </div>
 </div>
