@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Local ERP/CRM</title>
+  <title>Vaquero ERP</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -35,7 +35,8 @@
       background: var(--card); border-radius: 12px; padding: 40px 36px; width: 380px;
       box-shadow: 0 25px 50px rgba(0,0,0,.4);
     }
-    .login-card .logo { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+    .login-card .logo { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
+    .login-card .logo-img { width: 34px; height: 34px; object-fit: contain; }
     .login-card .tagline { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
     .login-card .err { background: #fef2f2; border: 1px solid #fca5a5; color: var(--danger); border-radius: 6px; padding: 9px 12px; font-size: 13px; margin-bottom: 14px; display: none; }
 
@@ -45,7 +46,8 @@
       display: flex; flex-direction: column; overflow-y: auto;
     }
     .sidebar-header { padding: 20px 18px 8px; }
-    .sidebar-header .brand { font-size: 16px; font-weight: 700; color: #f1f5f9; letter-spacing: .3px; }
+    .sidebar-header .brand { font-size: 16px; font-weight: 700; color: #f1f5f9; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+    .sidebar-header .brand-img { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
     .sidebar-header .user-pill {
       margin-top: 12px; background: rgba(255,255,255,.07); border-radius: 8px;
       padding: 8px 10px; display: flex; align-items: center; gap: 9px;
@@ -335,7 +337,10 @@
 <!-- LOGIN -->
 <div id="loginScreen">
   <div class="login-card">
-    <div class="logo">&#9889; Local ERP/CRM</div>
+    <div class="logo">
+      <img class="logo-img" src="/frontend/vaquero-logo.png" alt="Vaquero logo" onerror="this.style.display='none'" />
+      <span>Vaquero ERP</span>
+    </div>
     <div class="tagline">Vaquero Resources Management System</div>
     <div id="loginErr" class="err"></div>
     <div class="form-group">
@@ -357,7 +362,10 @@
 <!-- SIDEBAR -->
 <nav id="sidebar" style="display:none;">
   <div class="sidebar-header">
-    <div class="brand">&#9889; Local ERP</div>
+    <div class="brand">
+      <img class="brand-img" src="/frontend/vaquero-logo.png" alt="Vaquero logo" onerror="this.style.display='none'" />
+      <span>Vaquero ERP</span>
+    </div>
     <div class="user-pill">
       <div class="avatar" id="userAvatar">?</div>
       <div class="info">
