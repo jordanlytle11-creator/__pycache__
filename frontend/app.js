@@ -604,7 +604,7 @@ function formatMetric(value, digits = 2) {
 
 function renderStatusRows(statuses, roleTitle) {
   if (!Array.isArray(statuses) || statuses.length === 0) {
-    return `<tr class="empty-row"><td colspan="4">No ${esc(roleTitle)} status data yet</td></tr>`;
+    return `<tr class="empty-row"><td colspan="3">No ${esc(roleTitle)} status data yet</td></tr>`;
   }
 
   return statuses.slice(0, 10).map((row) => `
@@ -612,7 +612,6 @@ function renderStatusRows(statuses, roleTitle) {
       <td>${statusBadge(row.status || 'No Contact')}</td>
       <td>${formatMetric(row.record_count, 0)}</td>
       <td>${formatMetric(row.net_acres_total, 2)}</td>
-      <td>${formatMetric(row.variable_count, 0)}</td>
     </tr>
   `).join('');
 }
@@ -632,11 +631,10 @@ function renderProjectSummaryCard(summary, scopeLabel) {
         <div class="kpi-grid dashboard-mini-kpis">
           <div class="kpi-card"><div class="kpi-label">Total Records</div><div class="kpi-value">${formatMetric(summary.total_records, 0)}</div></div>
           <div class="kpi-card"><div class="kpi-label">Total Net Acres</div><div class="kpi-value">${formatMetric(summary.total_net_acres, 2)}</div></div>
-          <div class="kpi-card"><div class="kpi-label">Variable Count</div><div class="kpi-value">${formatMetric(summary.variable_count, 0)}</div></div>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Status</th><th>Records</th><th>Net Acres</th><th>Variables</th></tr></thead>
+            <thead><tr><th>Status</th><th>Records</th><th>Net Acres</th></tr></thead>
             <tbody>${renderStatusRows(summary.statuses, summary.project_name)}</tbody>
           </table>
         </div>
@@ -648,7 +646,6 @@ function renderProjectSummaryCard(summary, scopeLabel) {
 function renderDashboard(summary) {
   const totalEl = document.getElementById('kpiTotal');
   const netAcreEl = document.getElementById('kpiNetAcres');
-  const variableEl = document.getElementById('kpiVariables');
   const scopeEl = document.getElementById('kpiScope');
   const gridEl = document.getElementById('dashProjectPanels');
 
@@ -656,7 +653,6 @@ function renderDashboard(summary) {
     if (gridEl) gridEl.innerHTML = '<div class="card"><div class="card-body text-muted">No dashboard data available.</div></div>';
     if (totalEl) totalEl.textContent = '0';
     if (netAcreEl) netAcreEl.textContent = '0';
-    if (variableEl) variableEl.textContent = '0';
     if (scopeEl) scopeEl.textContent = 'No records in scope';
     return;
   }
@@ -667,7 +663,6 @@ function renderDashboard(summary) {
 
   if (totalEl) totalEl.textContent = formatMetric(master.total_records, 0);
   if (netAcreEl) netAcreEl.textContent = formatMetric(master.total_net_acres, 2);
-  if (variableEl) variableEl.textContent = formatMetric(master.variable_count, 0);
   if (scopeEl) scopeEl.textContent = `${scopeLabel} scope · ${formatMetric(summary.scope_record_count, 0)} record${Number(summary.scope_record_count) === 1 ? '' : 's'}`;
 
   if (!gridEl) return;
