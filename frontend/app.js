@@ -75,12 +75,16 @@ async function apiJSON(path, opts = {}) {
 
 // ── Badges ─────────────────────────────────────────────────────
 function statusBadge(status) {
-  const newStatuses = ['No Contact', 'No Contact / Unlocatable', 'Non-priority'];
-  const progressStatuses = ['Working', 'Verbally Committed', 'Agreed to Terms', 'Surface Only', 'Outreach Pending'];
-  const cls =
-    newStatuses.includes(status) ? 'badge-new'
-    : progressStatuses.includes(status) ? 'badge-progress'
-    : 'badge-closed';
+  const classByStatus = {
+    'No Contact': 'badge-status-no-contact',
+    'No Contact / Unlocatable': 'badge-status-no-contact',
+    'Surface Only': 'badge-status-surface-only',
+    'Working': 'badge-status-working',
+    'Verbally Committed': 'badge-status-verbally-committed',
+    'Agreed to Terms': 'badge-status-agreed',
+    'Signed / In Hand': 'badge-status-signed',
+  };
+  const cls = classByStatus[status] || 'badge-closed';
   return `<span class="badge ${cls}">${status}</span>`;
 }
 
