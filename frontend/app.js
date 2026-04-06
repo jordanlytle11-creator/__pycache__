@@ -728,13 +728,7 @@ function getColumnWidth(column) {
 function getColumnFilter(column) {
   const filters = getCrmFilterState();
   if (!filters[column.label]) {
-    const t = getColumnFilterType(column);
-    filters[column.label] =
-      t === 'number' ? { min: '', max: '' }
-      : t === 'date' ? { from: '', to: '' }
-      : t === 'project' ? { value: '' }
-      : t === 'status' ? { value: '' }
-      : { text: '' };
+    filters[column.label] = { value: '', sort: '' };
   }
   return filters[column.label];
 }
@@ -746,91 +740,132 @@ function extractColumnDisplayValue(record, column) {
   return String(value).trim();
 }
 
+function getColumnOptionValues(column) {
+  const seen = new Map();
+  currentCrmRawRecords.forEach((record) => {
+    const rawValue = extractColumnDisplayValue(record, column);
+    if (!rawValue) return;
+    const key = rawValue;
+    let label = rawValue;
+    if (column.type === 'project') label = getProjectName(rawValue) || rawValue;
+    if (column.type === 'date') label = fmtDate(rawValue);
+    if (!seen.has(key)) seen.set(key, label);
+  });
+
+  const entries = [...seen.entries()].map(([value, label]) => ({ value, label }));
+  const type = getColumnFilterType(column);
+  if (type === 'number') {
+    return entries.sort((a, b) => Number(a.value) - Number(b.value));
+  }
+  if (type === 'date') {
+    return entries.sort((a, b) => Date.parse(a.value) - Date.parse(b.value));
+  }
+  return entries.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function sortRecordsByColumn(records, column, direction) {
+  if (!direction) return records;
+  const type = getColumnFilterType(column);
+  const next = [...records];
+  next.sort((left, right) => {
+    const leftValue = extractColumnDisplayValue(left, column);
+    const rightValue = extractColumnDisplayValue(right, column);
+
+    if (type === 'number') {
+      const leftNum = Number(String(leftValue || '').replace(/[^0-9.\-]+/g, ''));
+      const rightNum = Number(String(rightValue || '').replace(/[^0-9.\-]+/g, ''));
+      const safeLeft = Number.isNaN(leftNum) ? Number.NEGATIVE_INFINITY : leftNum;
+      const safeRight = Number.isNaN(rightNum) ? Number.NEGATIVE_INFINITY : rightNum;
+      return direction === 'asc' ? safeLeft - safeRight : safeRight - safeLeft;
+    }
+
+    if (type === 'date') {
+      const leftTime = Date.parse(leftValue || '') || 0;
+      const rightTime = Date.parse(rightValue || '') || 0;
+      return direction === 'asc' ? leftTime - rightTime : rightTime - leftTime;
+    }
+
+    const leftText = column.type === 'project' ? (getProjectName(leftValue) || leftValue) : leftValue;
+    const rightText = column.type === 'project' ? (getProjectName(rightValue) || rightValue) : rightValue;
+    return direction === 'asc'
+      ? String(leftText).localeCompare(String(rightText))
+      : String(rightText).localeCompare(String(leftText));
+  });
+  return next;
+}
+
+function getActiveCrmSort(columns) {
+  for (const column of columns) {
+    const filter = getColumnFilter(column);
+    if (filter.sort) return { column, direction: filter.sort };
+  }
+  return null;
+}
+
 function applyCrmColumnFilters(records, columns) {
   return records.filter((record) => {
     for (const column of columns) {
-      const type = getColumnFilterType(column);
       const filter = getColumnFilter(column);
       const value = extractColumnDisplayValue(record, column);
-
-      if (type === 'text') {
-        const q = (filter.text || '').trim().toLowerCase();
-        if (q && !value.toLowerCase().includes(q)) return false;
-      } else if (type === 'status') {
-        if (filter.value && value !== filter.value) return false;
-      } else if (type === 'project') {
-        if (filter.value && value.toLowerCase() !== filter.value.toLowerCase()) return false;
-      } else if (type === 'number') {
-        if (!filter.min && !filter.max) continue;
-        const n = Number(value.replace(/[^0-9.\-]+/g, ''));
-        if (Number.isNaN(n)) return false;
-        if (filter.min !== '' && n < Number(filter.min)) return false;
-        if (filter.max !== '' && n > Number(filter.max)) return false;
-      } else if (type === 'date') {
-        if (!filter.from && !filter.to) continue;
-        const t = Date.parse(value);
-        if (Number.isNaN(t)) return false;
-        if (filter.from && t < Date.parse(filter.from)) return false;
-        if (filter.to && t > Date.parse(filter.to)) return false;
+      if (!filter.value) continue;
+      if (column.type === 'project') {
+        if (value.toLowerCase() !== filter.value.toLowerCase()) return false;
+      } else if (value !== filter.value) {
+        return false;
       }
     }
     return true;
   });
 }
 
-function getStatusOptionsForColumn(column) {
-  const options = new Set();
-  currentCrmRawRecords.forEach((record) => {
-    const value = extractColumnDisplayValue(record, column);
-    if (value) options.add(value);
-  });
-  return [...options].sort((a, b) => a.localeCompare(b));
-}
-
 function renderCrmFilterControl(column) {
-  const filterType = getColumnFilterType(column);
   const filter = getColumnFilter(column);
   const encodedLabel = encodeURIComponent(column.label);
+  const filterType = getColumnFilterType(column);
+  const options = getColumnOptionValues(column);
+  const sortLabel = filterType === 'number'
+    ? 'Lowest to Highest'
+    : filterType === 'date'
+      ? 'Oldest to Newest'
+      : 'A to Z';
+  const reverseSortLabel = filterType === 'number'
+    ? 'Highest to Lowest'
+    : filterType === 'date'
+      ? 'Newest to Oldest'
+      : 'Z to A';
 
-  if (filterType === 'status') {
-    const options = getStatusOptionsForColumn(column);
-    return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${options.map((opt) => `<option value="${esc(opt)}" ${filter.value === opt ? 'selected' : ''}>${esc(opt)}</option>`).join('')}</select>`;
-  }
-
-  if (filterType === 'project') {
-    const projectOptions = [...getAllProjects(), { key: 'unassigned', name: 'Unassigned' }];
-    return `<select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value"><option value="">All</option>${projectOptions.map((p) => `<option value="${esc(p.key)}" ${filter.value === p.key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
-  }
-
-  if (filterType === 'number') {
-    return `<div class="crm-filter-number"><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="min" type="number" step="any" placeholder="min" value="${esc(filter.min || '')}" /><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="max" type="number" step="any" placeholder="max" value="${esc(filter.max || '')}" /></div>`;
-  }
-
-  if (filterType === 'date') {
-    return `<div class="crm-filter-number"><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="from" type="date" value="${esc(filter.from || '')}" /><input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="to" type="date" value="${esc(filter.to || '')}" /></div>`;
-  }
-
-  return `<input class="crm-filter-input" data-filter-label="${encodedLabel}" data-filter-kind="text" type="text" placeholder="contains" value="${esc(filter.text || '')}" />`;
+  return `
+    <div class="crm-filter-stack">
+      <select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="value">
+        <option value="">All</option>
+        ${options.map((opt) => `<option value="${esc(opt.value)}" ${filter.value === opt.value ? 'selected' : ''}>${esc(opt.label)}</option>`).join('')}
+      </select>
+      <select class="crm-filter-select" data-filter-label="${encodedLabel}" data-filter-kind="sort">
+        <option value="">No Sort</option>
+        <option value="asc" ${filter.sort === 'asc' ? 'selected' : ''}>${sortLabel}</option>
+        <option value="desc" ${filter.sort === 'desc' ? 'selected' : ''}>${reverseSortLabel}</option>
+      </select>
+    </div>
+  `;
 }
 
 function bindCrmFilterInputs() {
-  document.querySelectorAll('.crm-filter-input, .crm-filter-select').forEach((el) => {
-    el.addEventListener('input', () => {
-      const label = decodeURIComponent(el.dataset.filterLabel || '');
-      const kind = el.dataset.filterKind;
-      const columns = getCrmColumns();
-      const column = columns.find((c) => c.label === label);
-      if (!column || !kind) return;
-      const filter = getColumnFilter(column);
-      filter[kind] = el.value;
-      renderCurrentCrmView();
-    });
+  document.querySelectorAll('.crm-filter-select').forEach((el) => {
     el.addEventListener('change', () => {
       const label = decodeURIComponent(el.dataset.filterLabel || '');
       const kind = el.dataset.filterKind;
       const columns = getCrmColumns();
       const column = columns.find((c) => c.label === label);
       if (!column || !kind) return;
+
+      if (kind === 'sort' && el.value) {
+        columns.forEach((otherColumn) => {
+          if (otherColumn.label === column.label) return;
+          const otherFilter = getColumnFilter(otherColumn);
+          otherFilter.sort = '';
+        });
+      }
+
       const filter = getColumnFilter(column);
       filter[kind] = el.value;
       renderCurrentCrmView();
@@ -1413,7 +1448,9 @@ function renderCrmTable(records) {
 function renderCurrentCrmView() {
   const columns = getCrmColumns();
   const filtered = applyCrmColumnFilters(currentCrmRawRecords, columns);
-  renderCrmTable(filtered);
+  const activeSort = getActiveCrmSort(columns);
+  const sorted = activeSort ? sortRecordsByColumn(filtered, activeSort.column, activeSort.direction) : filtered;
+  renderCrmTable(sorted);
   updateCrmPendingActionsUI();
 }
 
