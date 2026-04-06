@@ -277,6 +277,10 @@ const pageTitles = {
 
 const adminManagerCrmColumns = [
   { label: 'PROJECT', keys: ['project_normalized', 'project', 'project_name'], type: 'project', fallback: (record) => detectProjectFromRecord(record) || 'unassigned' },
+  { label: 'ADDRESS', keys: ['address', 'street_address'] },
+  { label: 'CITY', keys: ['city'] },
+  { label: 'ZIP CODE', keys: ['zip_code', 'zipcode', 'postal_code'] },
+  { label: 'PHONE NUMBERS', keys: ['phone_numbers', 'phone_number_list'] },
   { label: 'AMI/AOI', keys: ['ami_aoi', 'oklahoma_county_tomahawk_project', 'column_1'] },
   { label: 'STATE CODE', keys: ['state_code', 'column_2'] },
   { label: 'COUNTY CODE', keys: ['county_code', 'column_3'] },
@@ -320,6 +324,10 @@ const adminManagerCrmColumns = [
 
 const employeeCrmColumns = [
   { label: 'PROJECT', keys: ['project_normalized', 'project', 'project_name'], type: 'project', fallback: (record) => detectProjectFromRecord(record) || 'unassigned' },
+  { label: 'ADDRESS', keys: ['address', 'street_address'] },
+  { label: 'CITY', keys: ['city'] },
+  { label: 'ZIP CODE', keys: ['zip_code', 'zipcode', 'postal_code'] },
+  { label: 'PHONE NUMBERS', keys: ['phone_numbers', 'phone_number_list'] },
   { label: 'LEASE NAME', keys: ['lease_name', 'company', 'column_10'] },
   { label: 'STATE', keys: ['state', 'column_11'] },
   { label: 'COUNTY', keys: ['county', 'column_12'] },
@@ -346,6 +354,10 @@ const employeeCrmColumns = [
 
 const crmColumnEditors = {
   'PROJECT': { extraKeys: ['project_normalized', 'project', 'project_name'], type: 'project' },
+  'ADDRESS': { extraKeys: ['address', 'street_address'] },
+  'CITY': { extraKeys: ['city'] },
+  'ZIP CODE': { extraKeys: ['zip_code', 'zipcode', 'postal_code'], type: 'zip' },
+  'PHONE NUMBERS': { extraKeys: ['phone_numbers', 'phone_number_list'], type: 'phones' },
   'AMI/AOI': { extraKeys: ['ami_aoi'] },
   'STATE CODE': { extraKeys: ['state_code'] },
   'COUNTY CODE': { extraKeys: ['county_code'] },
@@ -940,6 +952,14 @@ function parseTrsValue(input) {
 function normalizeEditedValue(rawValue, editor) {
   const trimmed = rawValue.trim();
   if (trimmed === '') return null;
+  if (editor.type === 'zip') {
+    if (!/^\d{5}(?:-\d{4})?$/.test(trimmed)) throw new Error('ZIP must be 5 digits or ZIP+4');
+    return trimmed;
+  }
+  if (editor.type === 'phones') {
+    const parsed = parsePhoneNumbersInput(trimmed);
+    return parsed.join(', ');
+  }
   if (editor.type === 'int') {
     const parsed = parseInt(trimmed, 10);
     if (Number.isNaN(parsed)) throw new Error('Enter a whole number');
@@ -951,6 +971,22 @@ function normalizeEditedValue(rawValue, editor) {
     return parsed;
   }
   return trimmed;
+}
+
+function parsePhoneNumbersInput(inputValue) {
+  const raw = String(inputValue || '').trim();
+  if (!raw) return [];
+
+  const parts = raw.split(/[\n,;|]+/).map((v) => v.trim()).filter(Boolean);
+  if (parts.length > 10) throw new Error('Phone Numbers supports up to 10 numbers');
+
+  const normalized = [];
+  for (const part of parts) {
+    const digits = part.replace(/\D/g, '');
+    if (digits.length !== 10) throw new Error('Each phone must be 10 digits (XXX-XXX-XXXX)');
+    normalized.push(`${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`);
+  }
+  return normalized;
 }
 
 function buildCrmUpdatePayload(column, value) {
@@ -1474,6 +1510,26 @@ if (dashAddBtn) {
 document.getElementById('crmAddBtn').addEventListener('click', () => openModal('crmModal'));
 
 document.getElementById('createCrmBtn').addEventListener('click', async () => {
+  const address = document.getElementById('crmAddress').value.trim();
+  const city = document.getElementById('crmCity').value.trim();
+  const zipCode = document.getElementById('crmZip').value.trim();
+  const phoneRaw = document.getElementById('crmPhoneNumbers').value.trim();
+
+  let phoneNumbers = [];
+  if (phoneRaw) {
+    try {
+      phoneNumbers = parsePhoneNumbersInput(phoneRaw);
+    } catch (err) {
+      showToast(String(err.message || err), 'error');
+      return;
+    }
+  }
+
+  if (zipCode && !/^\d{5}(?:-\d{4})?$/.test(zipCode)) {
+    showToast('ZIP must be 5 digits or ZIP+4', 'error');
+    return;
+  }
+
   const body = {
     company:            document.getElementById('crmCompany').value.trim(),
     contact:            document.getElementById('crmContact').value.trim(),
@@ -1496,6 +1552,16 @@ document.getElementById('createCrmBtn').addEventListener('click', async () => {
     term_months:        parseInt(document.getElementById('crmTermMonths').value) || null,
     extension_months:   parseInt(document.getElementById('crmExtensionMonths').value) || null,
     mailed_date:        document.getElementById('crmMailedDate').value || null,
+    extra_data: {
+      address: address || null,
+      street_address: address || null,
+      city: city || null,
+      zip_code: zipCode || null,
+      zipcode: zipCode || null,
+      postal_code: zipCode || null,
+      phone_numbers: phoneNumbers.length ? phoneNumbers.join(', ') : null,
+      phone_number_list: phoneNumbers,
+    },
   };
   if (!body.company) { showToast('Company name is required', 'error'); return; }
   try {
