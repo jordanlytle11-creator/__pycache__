@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -38,8 +39,15 @@ class SuiteCrmClient:
         encoded = urlencode(payload).encode('utf-8')
         req = Request(self.rest_url, data=encoded, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        with urlopen(req, timeout=20) as resp:
-            body = resp.read().decode('utf-8')
+        try:
+            with urlopen(req, timeout=20) as resp:
+                body = resp.read().decode('utf-8')
+        except HTTPError as exc:
+            raise SuiteCrmError(f'SuiteCRM HTTP error {exc.code}: {exc.reason}') from exc
+        except URLError as exc:
+            raise SuiteCrmError(f'SuiteCRM network error: {exc.reason}') from exc
+        except Exception as exc:
+            raise SuiteCrmError(f'SuiteCRM request failed: {exc}') from exc
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
