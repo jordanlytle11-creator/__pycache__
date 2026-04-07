@@ -1,0 +1,37 @@
+services:
+  mariadb:
+    image: bitnami/mariadb:latest
+    container_name: suitecrm-db
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MARIADB_DATABASE=${MARIADB_DATABASE}
+      - MARIADB_USER=${MARIADB_USER}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD}
+    volumes:
+      - mariadb_data:/bitnami/mariadb
+    restart: unless-stopped
+
+  suitecrm:
+    image: bitnami/suitecrm:latest
+    container_name: suitecrm-app
+    ports:
+      - "80:8080"
+    environment:
+      - SUITECRM_DATABASE_HOST=mariadb
+      - SUITECRM_DATABASE_PORT_NUMBER=3306
+      - SUITECRM_DATABASE_NAME=${MARIADB_DATABASE}
+      - SUITECRM_DATABASE_USER=${MARIADB_USER}
+      - SUITECRM_DATABASE_PASSWORD=${MARIADB_PASSWORD}
+      - SUITECRM_USERNAME=${SUITECRM_USERNAME}
+      - SUITECRM_PASSWORD=${SUITECRM_PASSWORD}
+      - SUITECRM_EMAIL=${SUITECRM_EMAIL}
+      - ALLOW_EMPTY_PASSWORD=no
+    depends_on:
+      - mariadb
+    volumes:
+      - suitecrm_data:/bitnami/suitecrm
+    restart: unless-stopped
+
+volumes:
+  mariadb_data:
+  suitecrm_data:
