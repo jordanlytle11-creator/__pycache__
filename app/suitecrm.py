@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
 
@@ -37,17 +37,32 @@ class SuiteCrmClient:
 
     def _post(self, payload: dict) -> dict:
         encoded = urlencode(payload).encode('utf-8')
-        req = Request(self.rest_url, data=encoded, method='POST')
-        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        try:
-            with urlopen(req, timeout=20) as resp:
-                body = resp.read().decode('utf-8')
-        except HTTPError as exc:
-            raise SuiteCrmError(f'SuiteCRM HTTP error {exc.code}: {exc.reason}') from exc
-        except URLError as exc:
-            raise SuiteCrmError(f'SuiteCRM network error: {exc.reason}') from exc
-        except Exception as exc:
-            raise SuiteCrmError(f'SuiteCRM request failed: {exc}') from exc
+        post_url = self.rest_url
+        max_redirects = 3
+        redirects_followed = 0
+
+        while True:
+            req = Request(post_url, data=encoded, method='POST')
+            req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+            try:
+                with urlopen(req, timeout=20) as resp:
+                    body = resp.read().decode('utf-8')
+                    # Cache canonical REST URL once discovered.
+                    if post_url != self.rest_url:
+                        self.rest_url = post_url
+                    break
+            except HTTPError as exc:
+                if exc.code in (301, 302, 307, 308):
+                    location = exc.headers.get('Location') if exc.headers else None
+                    if location and redirects_followed < max_redirects:
+                        post_url = urljoin(post_url, location)
+                        redirects_followed += 1
+                        continue
+                raise SuiteCrmError(f'SuiteCRM HTTP error {exc.code}: {exc.reason}') from exc
+            except URLError as exc:
+                raise SuiteCrmError(f'SuiteCRM network error: {exc.reason}') from exc
+            except Exception as exc:
+                raise SuiteCrmError(f'SuiteCRM request failed: {exc}') from exc
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
