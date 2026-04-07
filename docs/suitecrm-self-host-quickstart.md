@@ -23,7 +23,7 @@ bash scripts/suitecrm/setup-ubuntu.sh
 mkdir -p /opt/local-erp-suitecrm
 cd /opt/local-erp-suitecrm
 cp /path/to/repo/scripts/suitecrm/docker-compose.yml .
-cp /path/to/repo/scripts/suitecrm/.env.example .env
+cp /path/to/repo/scripts/suitecrm/env.template .env
 nano .env
 docker compose up -d
 ```
