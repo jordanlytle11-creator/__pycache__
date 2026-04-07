@@ -193,15 +193,35 @@
     #crmTable thead .crm-resize-handle {
       position: absolute;
       top: 0;
-      right: 0;
-      width: 8px;
+      right: -4px;
+      width: 12px;
       height: 100%;
       cursor: col-resize;
-      opacity: 0;
+      opacity: .35;
       transition: opacity .12s ease;
+      z-index: 3;
     }
     #crmTable thead th:hover .crm-resize-handle {
       opacity: 1;
+    }
+    .crm-column-panel {
+      display: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+      max-height: 220px;
+      overflow-y: auto;
+      min-width: 280px;
+    }
+    .crm-column-panel.open { display: block; }
+    .crm-column-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text);
+      padding: 4px 2px;
     }
     #crmTable thead tr.crm-filter-row th {
       padding: 6px 8px;
@@ -534,12 +554,14 @@
             <div class="crm-controls-group">
               <button class="btn btn-ghost btn-sm" id="resetCrmLayoutBtn">Reset Layout</button>
               <button class="btn btn-ghost btn-sm" id="clearCrmFiltersBtn">Clear Filters</button>
+              <button class="btn btn-ghost btn-sm" id="toggleCrmColumnsBtn">Columns</button>
               <button class="btn btn-primary btn-sm" id="saveAllCrmChangesBtn">Save All Changes</button>
               <button class="btn btn-ghost btn-sm" id="undoCrmChangesBtn">Undo</button>
               <span class="text-muted" id="crmPendingChangesLabel">No staged changes</span>
               <span class="text-muted">Drag headers to move columns. Drag edge to resize.</span>
             </div>
           </div>
+          <div id="crmColumnPanel" class="crm-column-panel"></div>
         </div>
         <div class="table-wrap crm-table-viewport" id="crmTableViewport">
           <table id="crmTable">

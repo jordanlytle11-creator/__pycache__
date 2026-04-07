@@ -495,11 +495,13 @@ function getCrmLayoutState() {
     crmLayoutStateByRole[roleKey] = {
       order: baseColumns.map((column) => column.label),
       widths: {},
+      hidden: {},
       rowHeight: DEFAULT_CRM_ROW_HEIGHT,
     };
   }
 
   const state = crmLayoutStateByRole[roleKey];
+  if (!state.hidden) state.hidden = {};
   const baseLabels = baseColumns.map((column) => column.label);
   const existing = new Set(state.order);
   baseLabels.forEach((label) => { if (!existing.has(label)) state.order.push(label); });
@@ -844,7 +846,41 @@ function getCrmColumns() {
   const baseColumns = getBaseCrmColumns();
   const byLabel = new Map(baseColumns.map((column) => [column.label, column]));
   const state = getCrmLayoutState();
-  return state.order.map((label) => byLabel.get(label)).filter(Boolean);
+  return state.order
+    .filter((label) => !state.hidden[label])
+    .map((label) => byLabel.get(label))
+    .filter(Boolean);
+}
+
+function renderCrmColumnPanel() {
+  const panel = document.getElementById('crmColumnPanel');
+  if (!panel) return;
+
+  const baseColumns = getBaseCrmColumns();
+  const state = getCrmLayoutState();
+  panel.innerHTML = baseColumns.map((column) => {
+    const checked = state.hidden[column.label] ? '' : 'checked';
+    const id = `crmColToggle_${column.label.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    return `<label class="crm-column-item" for="${id}"><input type="checkbox" id="${id}" data-column-label="${esc(column.label)}" ${checked} /> ${esc(column.label)}</label>`;
+  }).join('');
+
+  panel.querySelectorAll('input[type="checkbox"][data-column-label]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const label = cb.dataset.columnLabel;
+      if (!label) return;
+      state.hidden[label] = !cb.checked;
+
+      const visibleCount = state.order.filter((colLabel) => !state.hidden[colLabel]).length;
+      if (visibleCount <= 0) {
+        state.hidden[label] = false;
+        cb.checked = true;
+        showToast('At least one column must remain visible', 'info');
+        return;
+      }
+      renderCurrentCrmView();
+      panel.classList.add('open');
+    });
+  });
 }
 
 function getCrmColumnEditor(column) {
@@ -1045,6 +1081,7 @@ function bindCrmHeaderInteractions() {
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      document.body.style.cursor = 'col-resize';
       const label = handle.dataset.columnLabel;
       if (!label) return;
       const startX = e.clientX;
@@ -1058,6 +1095,7 @@ function bindCrmHeaderInteractions() {
         syncCrmScrollBar();
       };
       const onUp = () => {
+        document.body.style.cursor = '';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       };
@@ -1086,6 +1124,7 @@ function resetCrmLayout() {
   crmLayoutStateByRole[roleKey] = {
     order: baseColumns.map((column) => column.label),
     widths: {},
+    hidden: {},
     rowHeight: DEFAULT_CRM_ROW_HEIGHT,
   };
   crmFilterStateByRole[roleKey] = {};
@@ -1099,6 +1138,8 @@ function bindCrmControls() {
   const clearFiltersBtn = document.getElementById('clearCrmFiltersBtn');
   const saveAllBtn = document.getElementById('saveAllCrmChangesBtn');
   const undoBtn = document.getElementById('undoCrmChangesBtn');
+  const toggleColsBtn = document.getElementById('toggleCrmColumnsBtn');
+  const colPanel = document.getElementById('crmColumnPanel');
   if (slider && slider.dataset.bound !== '1') {
     slider.dataset.bound = '1';
     slider.addEventListener('input', () => {
@@ -1110,6 +1151,19 @@ function bindCrmControls() {
   if (resetBtn && resetBtn.dataset.bound !== '1') {
     resetBtn.dataset.bound = '1';
     resetBtn.addEventListener('click', resetCrmLayout);
+  }
+  if (toggleColsBtn && colPanel && toggleColsBtn.dataset.bound !== '1') {
+    toggleColsBtn.dataset.bound = '1';
+    toggleColsBtn.addEventListener('click', () => {
+      const shouldOpen = !colPanel.classList.contains('open');
+      if (shouldOpen) renderCrmColumnPanel();
+      colPanel.classList.toggle('open', shouldOpen);
+    });
+    document.addEventListener('click', (e) => {
+      if (!colPanel.classList.contains('open')) return;
+      if (colPanel.contains(e.target) || toggleColsBtn.contains(e.target)) return;
+      colPanel.classList.remove('open');
+    });
   }
   if (clearFiltersBtn && clearFiltersBtn.dataset.bound !== '1') {
     clearFiltersBtn.dataset.bound = '1';
@@ -1172,6 +1226,7 @@ function bindCrmControls() {
     });
   }
   updateCrmPendingActionsUI();
+  renderCrmColumnPanel();
 }
 
 function getRecordValue(record, keys = []) {
