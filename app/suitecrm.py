@@ -29,8 +29,18 @@ class SuiteCrmClient:
         self.base_url = (base_url or '').rstrip('/')
         self.username = (username or '').strip()
         self.password = password or ''
-        self.rest_url = f'{self.base_url}/service/v4_1/rest.php'
+        self._rest_candidates = self._build_rest_candidates()
+        self.rest_url = self._rest_candidates[0] if self._rest_candidates else ''
         self._session_id: Optional[str] = None
+
+    def _build_rest_candidates(self) -> list[str]:
+        if not self.base_url:
+            return []
+
+        candidates = [f'{self.base_url}/service/v4_1/rest.php']
+        if not self.base_url.endswith('/legacy'):
+            candidates.append(f'{self.base_url}/legacy/service/v4_1/rest.php')
+        return candidates
 
     def is_configured(self) -> bool:
         return bool(self.base_url and self.username and self.password)
@@ -40,6 +50,7 @@ class SuiteCrmClient:
         post_url = self.rest_url
         max_redirects = 3
         redirects_followed = 0
+        attempted_urls = set()
 
         while True:
             req = Request(post_url, data=encoded, method='POST')
@@ -52,6 +63,13 @@ class SuiteCrmClient:
                         self.rest_url = post_url
                     break
             except HTTPError as exc:
+                if exc.code == 404:
+                    attempted_urls.add(post_url)
+                    fallback = next((url for url in self._rest_candidates if url not in attempted_urls), None)
+                    if fallback:
+                        post_url = fallback
+                        redirects_followed = 0
+                        continue
                 if exc.code in (301, 302, 307, 308):
                     location = exc.headers.get('Location') if exc.headers else None
                     if location and redirects_followed < max_redirects:

@@ -282,3 +282,25 @@ class CrmProjectAssignRequest(BaseModel):
             raise ValueError('project_key must be tomahawk, romulus, or empty')
         return value
 
+
+class SuiteCrmBatchSyncRequest(BaseModel):
+    record_ids: List[int]
+    module: Optional[str] = 'Leads'
+
+    @validator('record_ids')
+    def validate_record_ids(cls, v):
+        if not v:
+            raise ValueError('record_ids cannot be empty')
+        if len(v) > 200:
+            raise ValueError('record_ids cannot exceed 200 items per request')
+        if any((not isinstance(item, int)) or item <= 0 for item in v):
+            raise ValueError('record_ids must contain positive integers')
+        return list(dict.fromkeys(v))
+
+    @validator('module')
+    def validate_module(cls, v):
+        value = (v or 'Leads').strip()
+        if not value:
+            raise ValueError('module is required')
+        return value
+

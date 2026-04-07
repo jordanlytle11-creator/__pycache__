@@ -43,6 +43,7 @@ from app.schemas import (
     DashboardProjectSummary,
     DashboardStatusSummary,
     CrmProjectAssignRequest,
+    SuiteCrmBatchSyncRequest,
 )
 
 models.Base.metadata.create_all(bind=engine)
@@ -1783,6 +1784,44 @@ def suitecrm_sample_read(module: str = 'Leads', max_results: int = 5, admin: Use
     }
 
 
+@app.get('/admin/suitecrm/config')
+def suitecrm_config(admin: User = Depends(require_admin)):
+    client = _get_suitecrm_client()
+    configured = client.is_configured()
+    ui_url = client.base_url[:-7] if client.base_url.endswith('/legacy') else client.base_url
+    if not configured:
+        return {
+            'configured': False,
+            'connected': False,
+            'ui_url': ui_url,
+            'rest_url': client.rest_url,
+            'mapping_path': str(SUITECRM_FIELD_MAPPING_PATH),
+            'suggested_modules': ['Leads', 'Contacts', 'Accounts', 'Opportunities', 'Cases', 'Tasks'],
+        }
+
+    try:
+        session_id = client.login()
+        return {
+            'configured': True,
+            'connected': True,
+            'ui_url': ui_url,
+            'rest_url': client.rest_url,
+            'session_id_prefix': session_id[:8],
+            'mapping_path': str(SUITECRM_FIELD_MAPPING_PATH),
+            'suggested_modules': ['Leads', 'Contacts', 'Accounts', 'Opportunities', 'Cases', 'Tasks'],
+        }
+    except SuiteCrmError as exc:
+        return {
+            'configured': True,
+            'connected': False,
+            'ui_url': ui_url,
+            'rest_url': client.rest_url,
+            'error': str(exc),
+            'mapping_path': str(SUITECRM_FIELD_MAPPING_PATH),
+            'suggested_modules': ['Leads', 'Contacts', 'Accounts', 'Opportunities', 'Cases', 'Tasks'],
+        }
+
+
 @app.get('/admin/suitecrm/sync-record/{record_id}/dry-run')
 def suitecrm_sync_record_dry_run(record_id: int, module: str = 'Leads', db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     record = db.query(CrmRecord).filter(CrmRecord.id == record_id).first()
@@ -1857,6 +1896,87 @@ def suitecrm_sync_record(record_id: int, module: str = 'Leads', db: Session = De
         'idempotent_update': bool(existing_sync and existing_sync.get('suitecrm_id')),
         'suitecrm_id': suitecrm_id,
         'suitecrm_response': write_response,
+    }
+
+
+@app.post('/admin/suitecrm/sync-batch')
+def suitecrm_sync_batch(body: SuiteCrmBatchSyncRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    client = _get_suitecrm_client()
+    if not client.is_configured():
+        raise HTTPException(status_code=400, detail='SuiteCRM is not configured')
+
+    module = body.module or 'Leads'
+    records = db.query(CrmRecord).filter(CrmRecord.id.in_(body.record_ids)).all()
+    record_by_id = {record.id: record for record in records}
+    mapping = _get_suitecrm_mapping()
+
+    succeeded = 0
+    failed = 0
+    results = []
+
+    for record_id in body.record_ids:
+        record = record_by_id.get(record_id)
+        if not record:
+            failed += 1
+            results.append({
+                'local_record_id': record_id,
+                'ok': False,
+                'error': 'CRM record not found',
+            })
+            continue
+
+        existing_sync = _get_suitecrm_sync_entry(local_record_id=record.id, module_name=module)
+        project_key = _detect_project_key(record)
+        fields = map_crm_record_to_suitecrm_fields(record, project_key, mapping=mapping)
+        if existing_sync and existing_sync.get('suitecrm_id'):
+            fields['id'] = existing_sync['suitecrm_id']
+
+        try:
+            write_response = client.set_entry(module=module, fields=fields)
+            suitecrm_id = None
+            if isinstance(write_response, dict):
+                suitecrm_id = write_response.get('id')
+            if suitecrm_id is None and existing_sync:
+                suitecrm_id = existing_sync.get('suitecrm_id')
+
+            _upsert_suitecrm_sync_entry(local_record_id=record.id, module_name=module, suitecrm_id=suitecrm_id, status='ok', error=None)
+            _log_suitecrm_event('sync_ok', {
+                'module': module,
+                'local_record_id': record.id,
+                'suitecrm_id': suitecrm_id,
+                'idempotent_update': bool(existing_sync and existing_sync.get('suitecrm_id')),
+            })
+
+            succeeded += 1
+            results.append({
+                'local_record_id': record.id,
+                'ok': True,
+                'project_key': project_key,
+                'suitecrm_id': suitecrm_id,
+                'idempotent_update': bool(existing_sync and existing_sync.get('suitecrm_id')),
+            })
+        except SuiteCrmError as exc:
+            failed += 1
+            _upsert_suitecrm_sync_entry(local_record_id=record.id, module_name=module, suitecrm_id=existing_sync.get('suitecrm_id') if existing_sync else None, status='error', error=str(exc))
+            _log_suitecrm_event('sync_error', {
+                'module': module,
+                'local_record_id': record.id,
+                'suitecrm_id': existing_sync.get('suitecrm_id') if existing_sync else None,
+                'error': str(exc),
+            })
+            results.append({
+                'local_record_id': record.id,
+                'ok': False,
+                'project_key': project_key,
+                'error': str(exc),
+            })
+
+    return {
+        'module': module,
+        'requested': len(body.record_ids),
+        'succeeded': succeeded,
+        'failed': failed,
+        'results': results,
     }
 
 

@@ -353,6 +353,7 @@ const pageTitles = {
   users: 'User Management',
   invites: 'Invite Management',
   links: 'Link Tokens',
+  suitecrm: 'SuiteCRM Hub',
 };
 
 const adminManagerCrmColumns = [
@@ -528,6 +529,7 @@ function navigateTo(page) {
   if (page === 'crm') loadCRMRecords({});
   if (page === 'workbook-import') loadWorkbookStorageStatus();
   if (page === 'users') loadUsers();
+  if (page === 'suitecrm') loadSuiteCrmHub();
 }
 
 document.querySelectorAll('.nav-item[data-page]').forEach(item => {
@@ -572,6 +574,118 @@ function bindCrmScrollSync() {
 }
 
 bindCrmScrollSync();
+
+// ── SuiteCRM Hub ─────────────────────────────────────────────
+let suiteCrmLastConfig = null;
+
+async function loadSuiteCrmHub() {
+  const statusEl = document.getElementById('suitecrmStatusOut');
+  const configEl = document.getElementById('suitecrmConfigOut');
+  const frame = document.getElementById('suitecrmFrame');
+  if (!statusEl || !configEl || !frame) return;
+
+  try {
+    const config = await apiJSON('/admin/suitecrm/config', { headers: authHeaders() });
+    suiteCrmLastConfig = config;
+    configEl.style.display = 'block';
+    configEl.textContent = JSON.stringify(config, null, 2);
+
+    if (config.ui_url) {
+      frame.src = config.ui_url;
+    }
+
+    const health = await apiJSON('/admin/suitecrm/health', { headers: authHeaders() });
+    statusEl.style.display = 'block';
+    statusEl.textContent = JSON.stringify(health, null, 2);
+  } catch (err) {
+    statusEl.style.display = 'block';
+    statusEl.textContent = `SuiteCRM hub load failed: ${err.message}`;
+  }
+}
+
+const suitecrmRefreshBtn = document.getElementById('suitecrmRefreshBtn');
+if (suitecrmRefreshBtn) {
+  suitecrmRefreshBtn.addEventListener('click', async () => {
+    const statusEl = document.getElementById('suitecrmStatusOut');
+    try {
+      const health = await apiJSON('/admin/suitecrm/health', { headers: authHeaders() });
+      statusEl.style.display = 'block';
+      statusEl.textContent = JSON.stringify(health, null, 2);
+      showToast(health.connected ? 'SuiteCRM is connected' : 'SuiteCRM is not connected', health.connected ? 'success' : 'error');
+    } catch (err) {
+      statusEl.style.display = 'block';
+      statusEl.textContent = `Health check failed: ${err.message}`;
+      showToast('SuiteCRM health check failed', 'error');
+    }
+  });
+}
+
+const suitecrmSampleBtn = document.getElementById('suitecrmSampleBtn');
+if (suitecrmSampleBtn) {
+  suitecrmSampleBtn.addEventListener('click', async () => {
+    const statusEl = document.getElementById('suitecrmStatusOut');
+    const module = (document.getElementById('suitecrmModuleSelect')?.value || 'Leads').trim();
+    const maxResults = Math.max(1, Math.min(25, Number(document.getElementById('suitecrmSampleSize')?.value || 5)));
+    try {
+      const result = await apiJSON(`/admin/suitecrm/sample-read?module=${encodeURIComponent(module)}&max_results=${maxResults}`, { headers: authHeaders() });
+      statusEl.style.display = 'block';
+      statusEl.textContent = JSON.stringify(result, null, 2);
+      showToast(`Sample read complete for ${module}`, 'success');
+    } catch (err) {
+      statusEl.style.display = 'block';
+      statusEl.textContent = `Sample read failed: ${err.message}`;
+      showToast('SuiteCRM sample read failed', 'error');
+    }
+  });
+}
+
+const suitecrmSyncSelectedBtn = document.getElementById('suitecrmSyncSelectedBtn');
+if (suitecrmSyncSelectedBtn) {
+  suitecrmSyncSelectedBtn.addEventListener('click', async () => {
+    const statusEl = document.getElementById('suitecrmStatusOut');
+    const module = (document.getElementById('suitecrmModuleSelect')?.value || 'Leads').trim();
+    const recordIds = [...selectedCrmRecordIds];
+
+    if (!recordIds.length) {
+      showToast('Select CRM rows first from the CRM Records page', 'info');
+      return;
+    }
+
+    try {
+      const result = await apiJSON('/admin/suitecrm/sync-batch', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ module, record_ids: recordIds }),
+      });
+      statusEl.style.display = 'block';
+      statusEl.textContent = JSON.stringify(result, null, 2);
+      showToast(`Batch sync done: ${result.succeeded} succeeded, ${result.failed} failed`, result.failed ? 'error' : 'success');
+    } catch (err) {
+      statusEl.style.display = 'block';
+      statusEl.textContent = `Batch sync failed: ${err.message}`;
+      showToast('SuiteCRM batch sync failed', 'error');
+    }
+  });
+}
+
+const suitecrmOpenUiBtn = document.getElementById('suitecrmOpenUiBtn');
+if (suitecrmOpenUiBtn) {
+  suitecrmOpenUiBtn.addEventListener('click', async () => {
+    try {
+      if (!suiteCrmLastConfig) {
+        suiteCrmLastConfig = await apiJSON('/admin/suitecrm/config', { headers: authHeaders() });
+      }
+      const uiUrl = suiteCrmLastConfig && suiteCrmLastConfig.ui_url ? suiteCrmLastConfig.ui_url : '';
+      if (!uiUrl) {
+        showToast('SuiteCRM UI URL is not configured', 'error');
+        return;
+      }
+      window.open(uiUrl, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      showToast('Could not open SuiteCRM UI: ' + err.message, 'error');
+    }
+  });
+}
 
 // ── Modal helpers ──────────────────────────────────────────────
 function openModal(id) { document.getElementById(id).classList.add('open'); }

@@ -347,6 +347,8 @@
     .batch-individual-list { max-height: 250px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: grid; gap: 8px; }
     .batch-individual-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
     .batch-individual-row label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+    .suitecrm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .suitecrm-frame { width: 100%; height: 65vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
   </style>
 </head>
 <body>
@@ -433,6 +435,10 @@
     <div class="nav-item" data-page="links">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
       Link Tokens
+    </div>
+    <div class="nav-item" data-page="suitecrm">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"/></svg>
+      SuiteCRM Hub
     </div>
   </div>
 
@@ -683,6 +689,56 @@
           <div class="form-group"><label>Valid for (hours)</label><input id="linkHours" type="number" value="24" /></div>
           <button class="btn btn-primary" id="linkBtn">Generate Token</button>
           <div id="linkOut" class="output-pre mt-4" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SuiteCRM Hub -->
+    <div id="page-suitecrm" class="page">
+      <div class="section-title">SuiteCRM Hub</div>
+      <div class="suitecrm-grid mb-4">
+        <div class="card">
+          <div class="card-header"><h3>Connection + Actions</h3></div>
+          <div class="card-body">
+            <div class="form-row cols3" style="grid-template-columns: 1fr 180px 1fr; align-items:end;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Module</label>
+                <select id="suitecrmModuleSelect">
+                  <option>Leads</option>
+                  <option>Contacts</option>
+                  <option>Accounts</option>
+                  <option>Opportunities</option>
+                  <option>Cases</option>
+                  <option>Tasks</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Sample Size</label>
+                <input id="suitecrmSampleSize" type="number" min="1" max="25" value="5" />
+              </div>
+              <div class="text-muted" style="padding-bottom:8px;">Sync selected CRM rows or sample-read any SuiteCRM module.</div>
+            </div>
+            <div class="flex gap-2" style="margin-top:10px; flex-wrap:wrap;">
+              <button class="btn btn-primary" id="suitecrmRefreshBtn">Refresh Health</button>
+              <button class="btn btn-outline" id="suitecrmSampleBtn">Sample Read</button>
+              <button class="btn btn-outline" id="suitecrmSyncSelectedBtn">Sync Selected CRM Rows</button>
+              <button class="btn btn-ghost" id="suitecrmOpenUiBtn">Open SuiteCRM UI</button>
+            </div>
+            <div id="suitecrmStatusOut" class="output-pre mt-4" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Schema Bridge Notes</h3></div>
+          <div class="card-body">
+            <div class="text-muted">This page bridges your Local ERP schema to SuiteCRM modules via field mapping and batch sync. Use the same CRM data model, then fan out to different SuiteCRM modules for richer functionality.</div>
+            <div id="suitecrmConfigOut" class="output-pre mt-4" style="display:none;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Embedded SuiteCRM UI</h3></div>
+        <div class="card-body">
+          <iframe id="suitecrmFrame" class="suitecrm-frame" title="SuiteCRM UI"></iframe>
         </div>
       </div>
     </div>
